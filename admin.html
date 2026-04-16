@@ -487,7 +487,11 @@
           <div class="form-row">
             <div class="form-group" style="max-width:120px">
               <label for="brk-sl">Skill Level</label>
-              <input type="number" id="brk-sl" min="1" max="9" placeholder="SL">
+              <input type="number" id="brk-sl" min="1" max="9" placeholder="e.g. 2">
+            </div>
+            <div class="form-group" style="max-width:120px">
+              <label for="brk-sl-max">SL Max <span style="font-weight:400;opacity:0.6">(optional)</span></label>
+              <input type="number" id="brk-sl-max" min="1" max="9" placeholder="e.g. 3">
             </div>
             <div class="form-group">
               <label for="brk-winner">Winner Name</label>
@@ -972,7 +976,7 @@ function renderBrackets() {
     const bracketUrl = storageUrl(b.bracket_photo_path);
     return `
       <div class="bracket-item">
-        <span class="badge gold">SL ${esc(b.skill_level)}</span>
+        <span class="badge gold">SL ${esc(b.skill_level)}${b.skill_level_max ? '-' + esc(b.skill_level_max) : ''}</span>
         <div class="info">
           <strong>${esc(b.winner_name)}</strong>
           ${b.winner_team ? ' <span class="hint">(' + esc(b.winner_team) + ')</span>' : ''}
@@ -1021,8 +1025,10 @@ function editBracket(id) {
   const b = bracketsCache.find(x => x.id === id);
   if (!b) return;
   document.getElementById('brk-edit-id').value = b.id;
-  document.getElementById('bracket-form-title').textContent = 'Edit Bracket (SL ' + b.skill_level + ')';
+  var slLabel = b.skill_level_max ? 'SL ' + b.skill_level + '-' + b.skill_level_max : 'SL ' + b.skill_level;
+  document.getElementById('bracket-form-title').textContent = 'Edit Bracket (' + slLabel + ')';
   document.getElementById('brk-sl').value = b.skill_level || '';
+  document.getElementById('brk-sl-max').value = b.skill_level_max || '';
   document.getElementById('brk-winner').value = b.winner_name || '';
   document.getElementById('brk-team').value = b.winner_team || '';
   document.getElementById('brk-runner').value = b.runner_up_name || '';
@@ -1099,9 +1105,11 @@ async function saveBracket() {
 
     if (!editId) {
       // CREATE: insert the row first to get the ID
+      var slMax = parseInt(document.getElementById('brk-sl-max').value, 10) || null;
       const row = {
         event_id: parseInt(eventId, 10),
         skill_level: sl,
+        skill_level_max: slMax,
         winner_name: winnerName,
         winner_team: team,
         winner_players: players,
@@ -1128,8 +1136,10 @@ async function saveBracket() {
     }
 
     // UPDATE the row with photo paths (and other fields if editing)
+    var slMaxUpdate = parseInt(document.getElementById('brk-sl-max').value, 10) || null;
     const update = {
       skill_level: sl,
+      skill_level_max: slMaxUpdate,
       winner_name: winnerName,
       winner_team: team,
       winner_players: players,

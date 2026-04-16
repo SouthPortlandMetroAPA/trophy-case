@@ -573,22 +573,24 @@
         return;
       }
 
-      // Group by skill_level
+      // Group by skill_level display key (supports ranges like "2-3")
       const groups = new Map();
       for (const b of brackets) {
-        const sl = b.skill_level;
-        if (!groups.has(sl)) groups.set(sl, []);
-        groups.get(sl).push(b);
+        const slKey = b.skill_level_max
+          ? b.skill_level + '-' + b.skill_level_max
+          : String(b.skill_level);
+        if (!groups.has(slKey)) groups.set(slKey, []);
+        groups.get(slKey).push(b);
       }
 
       // Render
       let html = '';
-      for (const [sl, items] of groups) {
+      for (const [slKey, items] of groups) {
         html += '<section class="sl-section">';
-        html += '<h2 class="sl-heading">Skill Level ' + esc(String(sl)) + '</h2>';
+        html += '<h2 class="sl-heading">Skill Level ' + esc(slKey) + '</h2>';
         html += '<div class="card-grid">';
         for (const b of items) {
-          html += renderCard(b, sl);
+          html += renderCard(b, slKey);
         }
         html += '</div></section>';
       }
