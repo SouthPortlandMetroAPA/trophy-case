@@ -1,0 +1,1205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1a1a2e">
+  <title>Trophy Case Admin</title>
+  <meta name="description" content="Admin for the APA NW Challenge Trophy Case app.">
+  <style>
+    /*
+     * Trophy Case Admin — dark theme with gold accents.
+     * Premium champion feel: navy/charcoal bg, gold headers/buttons,
+     * cream text, dark-bordered cards.
+     */
+    :root {
+      --primary: #c2b280;
+      --primary-dark: #b5a574;
+      --bg: #1a1a2e;
+      --bg-light: #16213e;
+      --text: #f0e6d3;
+      --card: #1e2746;
+      --muted: #8a8a9a;
+      --border: #2a3050;
+      --radius: 10px;
+      --gold: #c2b280;
+      --gold-dark: #b5a574;
+      --success: #2e7d32;
+      --danger: #c0392b;
+      --shadow: 0 4px 12px rgba(0,0,0,0.3);
+      --spacing: 4px;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 16px; line-height: 1.5;
+      background: var(--bg); color: var(--text);
+      -webkit-text-size-adjust: 100%;
+    }
+    .page {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: calc(var(--spacing) * 4);
+    }
+
+    /* ---- Header ---- */
+    .header {
+      background: var(--bg-light);
+      padding: calc(var(--spacing) * 5) calc(var(--spacing) * 4) calc(var(--spacing) * 6);
+      text-align: center;
+      border-radius: var(--radius);
+      margin-bottom: calc(var(--spacing) * 4);
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--gold);
+    }
+    .header .subtitle {
+      font-size: 1rem;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    .header .wave {
+      position: absolute; left: 0; right: 0; bottom: -1px; height: 12px;
+      background: var(--bg);
+      -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 12' preserveAspectRatio='none'%3E%3Cpath d='M0,6 Q12.5,0 25,6 T50,6 T75,6 T100,6 L100,12 L0,12 Z' fill='%23000'/%3E%3C/svg%3E");
+      mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 12' preserveAspectRatio='none'%3E%3Cpath d='M0,6 Q12.5,0 25,6 T50,6 T75,6 T100,6 L100,12 L0,12 Z' fill='%23000'/%3E%3C/svg%3E");
+      -webkit-mask-size: 100% 100%; mask-size: 100% 100%;
+      -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+    }
+
+    /* ---- Key gate ---- */
+    .key-gate { text-align: center; padding: calc(var(--spacing) * 8) calc(var(--spacing) * 4); }
+    .key-gate .card { max-width: 440px; margin: 0 auto; }
+
+    /* ---- Tabs ---- */
+    .tabs {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: calc(var(--spacing) * 4);
+    }
+    .tab {
+      flex: 1;
+      min-width: 100px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+      font-family: inherit;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text);
+      cursor: pointer;
+      text-align: center;
+      min-height: 48px;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .tab:hover { background: var(--bg-light); }
+    .tab.active {
+      background: var(--gold);
+      border-color: var(--gold-dark);
+      color: #000;
+    }
+
+    /* ---- Cards ---- */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: calc(var(--spacing) * 6);
+      margin-bottom: calc(var(--spacing) * 4);
+      box-shadow: var(--shadow);
+    }
+    .card h2 {
+      margin: 0 0 calc(var(--spacing) * 3);
+      font-size: 1.1rem;
+      color: var(--gold);
+    }
+    .card h3 {
+      margin: calc(var(--spacing) * 4) 0 calc(var(--spacing) * 2);
+      font-size: 0.95rem;
+      color: var(--gold);
+    }
+    .hint { color: var(--muted); font-size: 0.85rem; line-height: 1.5; }
+
+    /* ---- Form controls ---- */
+    .form-group { margin-bottom: calc(var(--spacing) * 4); }
+    .form-group label {
+      display: block; font-weight: 600; font-size: 0.9rem;
+      margin-bottom: calc(var(--spacing) * 2);
+      color: var(--text);
+    }
+    .form-group input[type="text"],
+    .form-group input[type="number"],
+    .form-group input[type="file"],
+    .form-group textarea,
+    .form-group select {
+      width: 100%;
+      min-height: 44px;
+      padding: calc(var(--spacing) * 3);
+      font-size: 1rem;
+      font-family: inherit;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg);
+      color: var(--text);
+      outline: none;
+    }
+    .form-group input:focus,
+    .form-group textarea:focus,
+    .form-group select:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(194, 178, 128, 0.25);
+    }
+    .form-group textarea {
+      min-height: 80px; resize: vertical;
+      font-family: inherit; font-size: 0.9rem;
+    }
+    .form-group select option { background: var(--bg); color: var(--text); }
+    .form-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .form-row .form-group { flex: 1; min-width: 140px; }
+
+    /* ---- Buttons ---- */
+    .btn {
+      display: inline-block;
+      min-height: 48px;
+      padding: calc(var(--spacing) * 3) calc(var(--spacing) * 5);
+      font-size: 0.95rem;
+      font-weight: 700;
+      font-family: inherit;
+      border: none;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+    }
+    .btn-primary { background: var(--gold); color: #000; }
+    .btn-primary:hover:not(:disabled) { background: var(--gold-dark); }
+    .btn-primary:disabled { background: #444; color: #888; cursor: not-allowed; }
+    .btn-outline { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    .btn-outline:hover { background: var(--bg-light); }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-danger:hover:not(:disabled) { background: #9a221a; }
+    .btn-sm { min-height: 36px; font-size: 0.8rem; padding: 6px 12px; }
+
+    /* ---- Tables ---- */
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    .table th, .table td {
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: middle;
+    }
+    .table th {
+      background: var(--bg-light);
+      font-weight: 700;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--gold);
+    }
+    .table tr:hover td { background: rgba(194, 178, 128, 0.05); }
+    .table-wrap { overflow-x: auto; }
+
+    /* ---- Badges ---- */
+    .badge {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .badge.ok { background: #1b4332; color: #95d5b2; }
+    .badge.err { background: #5c1a1a; color: #f5c6cb; }
+    .badge.warn { background: #5c4a1a; color: #ffd97a; }
+    .badge.neutral { background: #2a3050; color: var(--muted); }
+    .badge.gold { background: var(--gold); color: #000; }
+
+    /* ---- Status line ---- */
+    .status-line {
+      padding: calc(var(--spacing) * 3);
+      border-radius: var(--radius);
+      margin-bottom: calc(var(--spacing) * 3);
+      font-size: 0.9rem;
+      display: none;
+    }
+    .status-line.shown { display: block; }
+    .status-line.ok { background: #1b4332; color: #95d5b2; border: 1px solid #2d6a4f; }
+    .status-line.err { background: #5c1a1a; color: #f5c6cb; border: 1px solid #8b2e2e; }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid rgba(240,230,211,0.2);
+      border-top-color: var(--gold);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .footer {
+      text-align: center;
+      font-size: 0.75rem;
+      color: var(--muted);
+      padding: calc(var(--spacing) * 4) 0;
+    }
+    .hidden { display: none !important; }
+
+    /* ---- Toggle switch ---- */
+    .toggle {
+      position: relative;
+      display: inline-block;
+      width: 44px; height: 24px;
+      cursor: pointer;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle .slider {
+      position: absolute; inset: 0;
+      background: #444;
+      border-radius: 24px;
+      transition: background 0.2s;
+    }
+    .toggle .slider::before {
+      content: '';
+      position: absolute;
+      left: 2px; top: 2px;
+      width: 20px; height: 20px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    .toggle input:checked + .slider { background: var(--success); }
+    .toggle input:checked + .slider::before { transform: translateX(20px); }
+
+    /* ---- Sort order input ---- */
+    .sort-input {
+      width: 52px !important;
+      min-height: 32px !important;
+      padding: 4px 6px !important;
+      text-align: center;
+      font-size: 0.9rem !important;
+      background: var(--bg) !important;
+      color: var(--text) !important;
+      border: 1px solid var(--border) !important;
+      border-radius: 6px !important;
+    }
+    .sort-input:focus {
+      border-color: var(--gold) !important;
+      box-shadow: 0 0 0 2px rgba(194,178,128,0.25) !important;
+    }
+
+    /* ---- Thumbnail ---- */
+    .thumb {
+      width: 48px; height: 48px;
+      object-fit: cover;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      cursor: pointer;
+    }
+    .thumb:hover { opacity: 0.8; }
+
+    /* ---- Bracket list cards ---- */
+    .bracket-item {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 8px;
+      background: var(--bg-light);
+    }
+    .bracket-item .info { flex: 1; min-width: 200px; }
+    .bracket-item .actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .bracket-item .photos {
+      display: flex;
+      gap: 6px;
+    }
+
+    /* ---- File input styling ---- */
+    .file-label {
+      display: inline-block;
+      padding: 8px 16px;
+      background: var(--bg-light);
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 0.85rem;
+      color: var(--muted);
+      text-align: center;
+      min-height: 44px;
+      line-height: 28px;
+      transition: border-color 0.15s;
+    }
+    .file-label:hover { border-color: var(--gold); color: var(--text); }
+    .file-label.has-file { border-color: var(--gold); color: var(--gold); }
+    .file-input-hidden { display: none; }
+
+    /* ---- Image preview ---- */
+    .img-preview {
+      max-width: 120px; max-height: 80px;
+      object-fit: cover;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      margin-top: 8px;
+    }
+
+    /* ---- Responsive ---- */
+    @media (max-width: 600px) {
+      .bracket-item { flex-direction: column; align-items: stretch; }
+      .bracket-item .actions { justify-content: flex-end; }
+    }
+  </style>
+</head>
+<body>
+  <!-- ==================== HEADER ==================== -->
+  <div class="header">
+    <h1>Trophy Case</h1>
+    <div class="subtitle">Admin</div>
+    <div class="wave"></div>
+  </div>
+
+  <div class="page">
+    <!-- Status line — used globally -->
+    <div id="status" class="status-line"></div>
+
+    <!-- ==================== KEY GATE ==================== -->
+    <div id="gate" class="key-gate">
+      <div class="card">
+        <h2>Access Denied</h2>
+        <p class="hint">Provide a valid <code>?key=</code> parameter to access the admin panel.</p>
+      </div>
+    </div>
+
+    <!-- ==================== ADMIN PANEL (hidden until auth) ==================== -->
+    <div id="admin" class="hidden">
+      <!-- Tabs -->
+      <div class="tabs">
+        <button class="tab active" data-tab="events" onclick="switchTab('events')">Events</button>
+        <button class="tab" data-tab="areas" onclick="switchTab('areas')">Areas</button>
+        <button class="tab" data-tab="brackets" onclick="switchTab('brackets')">Brackets</button>
+      </div>
+
+      <!-- ============ EVENTS TAB ============ -->
+      <div id="panel-events" class="tab-panel active">
+        <div class="card">
+          <h2>Add Event</h2>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="evt-name">Event Name</label>
+              <input type="text" id="evt-name" placeholder="e.g. Singles" oninput="autoSlug()">
+            </div>
+            <div class="form-group">
+              <label for="evt-slug">Slug</label>
+              <input type="text" id="evt-slug" placeholder="auto-generated">
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="addEvent()">Add Event</button>
+        </div>
+        <div class="card">
+          <h2>Events</h2>
+          <div id="events-loading" class="hint"><span class="spinner"></span> Loading...</div>
+          <div class="table-wrap">
+            <table class="table hidden" id="events-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Slug</th>
+                  <th>Sort</th>
+                  <th>Active</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="events-body"></tbody>
+            </table>
+          </div>
+          <p id="events-empty" class="hint hidden">No events yet.</p>
+        </div>
+      </div>
+
+      <!-- ============ AREAS TAB ============ -->
+      <div id="panel-areas" class="tab-panel">
+        <div class="card">
+          <h2>Add Area</h2>
+          <div class="form-group">
+            <label for="area-name">Area Name</label>
+            <input type="text" id="area-name" placeholder="e.g. South Portland">
+          </div>
+          <button class="btn btn-primary" onclick="addArea()">Add Area</button>
+        </div>
+        <div class="card">
+          <h2>Areas</h2>
+          <div id="areas-loading" class="hint"><span class="spinner"></span> Loading...</div>
+          <div class="table-wrap">
+            <table class="table hidden" id="areas-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Sort</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="areas-body"></tbody>
+            </table>
+          </div>
+          <p id="areas-empty" class="hint hidden">No areas yet.</p>
+        </div>
+      </div>
+
+      <!-- ============ BRACKETS TAB ============ -->
+      <div id="panel-brackets" class="tab-panel">
+        <div class="card">
+          <h2>Brackets</h2>
+          <div class="form-group">
+            <label for="brk-event">Event</label>
+            <select id="brk-event" onchange="onBracketEventChange()">
+              <option value="">-- Select Event --</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Bracket add/edit form (hidden until event selected) -->
+        <div id="bracket-form-wrap" class="card hidden">
+          <h2 id="bracket-form-title">Add Bracket</h2>
+          <input type="hidden" id="brk-edit-id" value="">
+          <div class="form-row">
+            <div class="form-group" style="max-width:120px">
+              <label for="brk-sl">Skill Level</label>
+              <input type="number" id="brk-sl" min="1" max="9" placeholder="SL">
+            </div>
+            <div class="form-group">
+              <label for="brk-winner">Winner Name</label>
+              <input type="text" id="brk-winner" placeholder="Player or team display name">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="brk-team">Team Name <span class="hint">(optional)</span></label>
+              <input type="text" id="brk-team" placeholder="Team name for team events">
+            </div>
+            <div class="form-group">
+              <label for="brk-runner">Runner-up <span class="hint">(optional)</span></label>
+              <input type="text" id="brk-runner" placeholder="Runner-up name">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="brk-players">Team Players <span class="hint">(optional, comma-separated)</span></label>
+            <textarea id="brk-players" placeholder="Player 1, Player 2, Player 3"></textarea>
+          </div>
+          <div class="form-group">
+            <label for="brk-area">League Area <span class="hint">(optional)</span></label>
+            <select id="brk-area">
+              <option value="">-- None --</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Trophy Photo</label>
+              <label class="file-label" id="trophy-label" for="brk-trophy-file">Choose image...</label>
+              <input type="file" id="brk-trophy-file" class="file-input-hidden" accept="image/*" onchange="onFileSelected(this,'trophy-label','trophy-preview')">
+              <img id="trophy-preview" class="img-preview hidden">
+            </div>
+            <div class="form-group">
+              <label>Bracket Photo</label>
+              <label class="file-label" id="bracket-label" for="brk-bracket-file">Choose image...</label>
+              <input type="file" id="brk-bracket-file" class="file-input-hidden" accept="image/*" onchange="onFileSelected(this,'bracket-label','bracket-preview')">
+              <img id="bracket-preview" class="img-preview hidden">
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-primary" id="brk-submit" onclick="saveBracket()">Save Bracket</button>
+            <button class="btn btn-outline" id="brk-cancel" onclick="cancelBracketEdit()" style="display:none">Cancel</button>
+          </div>
+        </div>
+
+        <!-- Bracket list -->
+        <div id="bracket-list-wrap" class="card hidden">
+          <h2 id="bracket-list-title">Brackets</h2>
+          <div id="brackets-loading" class="hint hidden"><span class="spinner"></span> Loading...</div>
+          <div id="brackets-list"></div>
+          <p id="brackets-empty" class="hint hidden">No brackets for this event.</p>
+        </div>
+      </div>
+    </div><!-- /admin -->
+  </div><!-- /page -->
+
+  <div class="footer">Trophy Case Admin v0.1</div>
+
+<script>
+/* ============================================================
+ *  Trophy Case Admin
+ *  Single-file admin for the APA NW Challenge Trophy Case.
+ *
+ *  Auth: ?key=SERVICE_ROLE_KEY in URL. Validated on load via
+ *  a test query. Read operations use the anon key (SB_READ),
+ *  write/delete operations use the service_role key (SB_WRITE).
+ *
+ *  Tables: trophy_events, trophy_areas, trophy_brackets
+ *  Storage bucket: trophy-case-photos (public)
+ * ============================================================ */
+
+const SB_URL   = 'https://dqzbekoaysgaiqljueac.supabase.co';
+const SB_READ  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxemJla29heXNnYWlxbGp1ZWFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNzA5NzgsImV4cCI6MjA5MDc0Njk3OH0.cCdGxZ4zEFzU_r6lWSDeoNWG67Q4MSYCAtpds035dfU';
+let SB_WRITE   = ''; // set from URL ?key= param
+
+/* ---------- State ---------- */
+let eventsCache  = [];   // [{id, name, slug, sort_order, active}]
+let areasCache   = [];   // [{id, name, sort_order}]
+let bracketsCache = [];  // brackets for the currently selected event
+
+/* ---------- Utilities ---------- */
+
+/** HTML-escape to prevent XSS */
+function esc(s) {
+  if (s == null) return '';
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+/** Generate URL slug from a string: lowercase, hyphens, alphanumeric only */
+function toSlug(s) {
+  return String(s).toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+/** Show status line */
+function showStatus(msg, type) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = 'status-line shown ' + type;
+  if (type === 'ok') setTimeout(() => { el.className = 'status-line'; }, 4000);
+}
+
+/** Supabase REST helper (read uses anon key, write uses service_role) */
+async function sb(method, path, body, useWrite) {
+  const key = useWrite ? SB_WRITE : SB_READ;
+  const opts = {
+    method,
+    headers: {
+      'apikey': key,
+      'Authorization': 'Bearer ' + key,
+      'Content-Type': 'application/json',
+      'Prefer': method === 'POST' ? 'return=representation' : (method === 'PATCH' ? 'return=representation' : '')
+    }
+  };
+  if (body && method !== 'GET' && method !== 'DELETE') opts.body = JSON.stringify(body);
+  // For DELETE with Prefer header to get back deleted rows
+  if (method === 'DELETE') opts.headers['Prefer'] = 'return=representation';
+  const r = await fetch(SB_URL + '/rest/v1/' + path, opts);
+  if (!r.ok) {
+    const txt = await r.text();
+    throw new Error('Supabase ' + r.status + ': ' + txt);
+  }
+  const ct = r.headers.get('content-type') || '';
+  if (ct.includes('json') && r.status !== 204) return r.json();
+  return null;
+}
+
+/** Upload image to Supabase Storage. Returns the public path. */
+async function uploadImage(file, folder, bracketId, type) {
+  const ts = Date.now();
+  const path = folder + '/' + bracketId + '_' + type + '_' + ts + '.jpg';
+  const r = await fetch(SB_URL + '/storage/v1/object/trophy-case-photos/' + path, {
+    method: 'PUT',
+    headers: {
+      'Authorization': 'Bearer ' + SB_WRITE,
+      'Content-Type': 'image/jpeg',
+      'x-upsert': 'true'
+    },
+    body: file
+  });
+  if (!r.ok) {
+    const txt = await r.text();
+    throw new Error('Storage upload ' + r.status + ': ' + txt);
+  }
+  return path;
+}
+
+/** Delete file from Supabase Storage */
+async function deleteStorageFile(path) {
+  if (!path) return;
+  await fetch(SB_URL + '/storage/v1/object/trophy-case-photos/' + path, {
+    method: 'DELETE',
+    headers: { 'Authorization': 'Bearer ' + SB_WRITE }
+  });
+  // Ignore errors on delete — file may already be gone
+}
+
+/** Get public URL for a storage path */
+function storageUrl(path) {
+  if (!path) return '';
+  return SB_URL + '/storage/v1/object/public/trophy-case-photos/' + path;
+}
+
+/**
+ * Client-side image resize.
+ * Returns a Promise<Blob> — JPEG at 80% quality, max 1200px on longest side.
+ */
+function resizeImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const img = new Image();
+      img.onload = function() {
+        const MAX = 1200;
+        let w = img.width, h = img.height;
+        if (w > MAX || h > MAX) {
+          if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+          else       { w = Math.round(w * MAX / h); h = MAX; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        canvas.toBlob(blob => {
+          if (blob) resolve(blob);
+          else reject(new Error('Canvas toBlob failed'));
+        }, 'image/jpeg', 0.8);
+      };
+      img.onerror = () => reject(new Error('Failed to load image'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ---------- Tab switching ---------- */
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
+}
+
+/* ---------- File input UI ---------- */
+function onFileSelected(input, labelId, previewId) {
+  const label = document.getElementById(labelId);
+  const preview = document.getElementById(previewId);
+  if (input.files && input.files[0]) {
+    label.textContent = input.files[0].name;
+    label.classList.add('has-file');
+    // Show preview
+    const reader = new FileReader();
+    reader.onload = e => { preview.src = e.target.result; preview.classList.remove('hidden'); };
+    reader.readAsDataURL(input.files[0]);
+  } else {
+    label.textContent = 'Choose image...';
+    label.classList.remove('has-file');
+    preview.classList.add('hidden');
+    preview.src = '';
+  }
+}
+
+/* ---------- Auto-slug for events ---------- */
+function autoSlug() {
+  const name = document.getElementById('evt-name').value;
+  document.getElementById('evt-slug').value = toSlug(name);
+}
+
+/* ================================================================
+ *  EVENTS
+ * ================================================================ */
+async function loadEvents() {
+  const loading = document.getElementById('events-loading');
+  const table   = document.getElementById('events-table');
+  const empty   = document.getElementById('events-empty');
+  loading.classList.remove('hidden');
+  table.classList.add('hidden');
+  empty.classList.add('hidden');
+  try {
+    eventsCache = await sb('GET', 'trophy_events?select=*&order=sort_order.asc,name.asc');
+    renderEvents();
+    populateBracketEventDropdown();
+  } catch (e) {
+    showStatus('Failed to load events: ' + e.message, 'err');
+  } finally {
+    loading.classList.add('hidden');
+  }
+}
+
+function renderEvents() {
+  const body  = document.getElementById('events-body');
+  const table = document.getElementById('events-table');
+  const empty = document.getElementById('events-empty');
+  if (!eventsCache.length) {
+    table.classList.add('hidden');
+    empty.classList.remove('hidden');
+    return;
+  }
+  table.classList.remove('hidden');
+  empty.classList.add('hidden');
+  body.innerHTML = eventsCache.map(ev => `
+    <tr>
+      <td>${esc(ev.name)}</td>
+      <td><code>${esc(ev.slug)}</code></td>
+      <td><input type="number" class="sort-input" value="${ev.sort_order || 0}" onchange="updateEventSort(${ev.id}, this.value)"></td>
+      <td>
+        <label class="toggle">
+          <input type="checkbox" ${ev.active ? 'checked' : ''} onchange="toggleEventActive(${ev.id}, this.checked)">
+          <span class="slider"></span>
+        </label>
+      </td>
+      <td><button class="btn btn-danger btn-sm" onclick="deleteEvent(${ev.id}, '${esc(ev.name)}')">Delete</button></td>
+    </tr>
+  `).join('');
+}
+
+async function addEvent() {
+  const name = document.getElementById('evt-name').value.trim();
+  const slug = document.getElementById('evt-slug').value.trim() || toSlug(name);
+  if (!name || !slug) return showStatus('Event name and slug are required.', 'err');
+  try {
+    await sb('POST', 'trophy_events', { name, slug, sort_order: eventsCache.length, active: true }, true);
+    document.getElementById('evt-name').value = '';
+    document.getElementById('evt-slug').value = '';
+    showStatus('Event added.', 'ok');
+    await loadEvents();
+  } catch (e) {
+    showStatus('Failed to add event: ' + e.message, 'err');
+  }
+}
+
+async function updateEventSort(id, val) {
+  try {
+    await sb('PATCH', 'trophy_events?id=eq.' + id, { sort_order: parseInt(val, 10) || 0 }, true);
+    showStatus('Sort order updated.', 'ok');
+    await loadEvents();
+  } catch (e) {
+    showStatus('Failed to update sort: ' + e.message, 'err');
+  }
+}
+
+async function toggleEventActive(id, active) {
+  try {
+    await sb('PATCH', 'trophy_events?id=eq.' + id, { active }, true);
+    showStatus('Event ' + (active ? 'activated' : 'deactivated') + '.', 'ok');
+    // Update local cache without full reload
+    const ev = eventsCache.find(e => e.id === id);
+    if (ev) ev.active = active;
+  } catch (e) {
+    showStatus('Failed to toggle active: ' + e.message, 'err');
+  }
+}
+
+async function deleteEvent(id, name) {
+  if (!confirm('Delete event "' + name + '"? This will also delete all brackets for this event.')) return;
+  try {
+    // First delete all brackets for this event (and their storage files)
+    const brackets = await sb('GET', 'trophy_brackets?event_id=eq.' + id + '&select=id,trophy_photo_path,bracket_photo_path');
+    for (const b of (brackets || [])) {
+      await deleteStorageFile(b.trophy_photo_path);
+      await deleteStorageFile(b.bracket_photo_path);
+    }
+    if (brackets && brackets.length) {
+      await sb('DELETE', 'trophy_brackets?event_id=eq.' + id, null, true);
+    }
+    await sb('DELETE', 'trophy_events?id=eq.' + id, null, true);
+    showStatus('Event deleted.', 'ok');
+    await loadEvents();
+  } catch (e) {
+    showStatus('Failed to delete event: ' + e.message, 'err');
+  }
+}
+
+/* ================================================================
+ *  AREAS
+ * ================================================================ */
+async function loadAreas() {
+  const loading = document.getElementById('areas-loading');
+  const table   = document.getElementById('areas-table');
+  const empty   = document.getElementById('areas-empty');
+  loading.classList.remove('hidden');
+  table.classList.add('hidden');
+  empty.classList.add('hidden');
+  try {
+    areasCache = await sb('GET', 'trophy_areas?select=*&order=sort_order.asc,name.asc');
+    renderAreas();
+    populateBracketAreaDropdown();
+  } catch (e) {
+    showStatus('Failed to load areas: ' + e.message, 'err');
+  } finally {
+    loading.classList.add('hidden');
+  }
+}
+
+function renderAreas() {
+  const body  = document.getElementById('areas-body');
+  const table = document.getElementById('areas-table');
+  const empty = document.getElementById('areas-empty');
+  if (!areasCache.length) {
+    table.classList.add('hidden');
+    empty.classList.remove('hidden');
+    return;
+  }
+  table.classList.remove('hidden');
+  empty.classList.add('hidden');
+  body.innerHTML = areasCache.map(a => `
+    <tr>
+      <td>${esc(a.name)}</td>
+      <td><input type="number" class="sort-input" value="${a.sort_order || 0}" onchange="updateAreaSort(${a.id}, this.value)"></td>
+      <td><button class="btn btn-danger btn-sm" onclick="deleteArea(${a.id}, '${esc(a.name)}')">Delete</button></td>
+    </tr>
+  `).join('');
+}
+
+async function addArea() {
+  const name = document.getElementById('area-name').value.trim();
+  if (!name) return showStatus('Area name is required.', 'err');
+  try {
+    await sb('POST', 'trophy_areas', { name, sort_order: areasCache.length }, true);
+    document.getElementById('area-name').value = '';
+    showStatus('Area added.', 'ok');
+    await loadAreas();
+  } catch (e) {
+    showStatus('Failed to add area: ' + e.message, 'err');
+  }
+}
+
+async function updateAreaSort(id, val) {
+  try {
+    await sb('PATCH', 'trophy_areas?id=eq.' + id, { sort_order: parseInt(val, 10) || 0 }, true);
+    showStatus('Sort order updated.', 'ok');
+    await loadAreas();
+  } catch (e) {
+    showStatus('Failed to update sort: ' + e.message, 'err');
+  }
+}
+
+async function deleteArea(id, name) {
+  if (!confirm('Delete area "' + name + '"? Brackets referencing this area will lose their area link.')) return;
+  try {
+    // Nullify area_id on any brackets referencing this area
+    await sb('PATCH', 'trophy_brackets?area_id=eq.' + id, { area_id: null }, true);
+    await sb('DELETE', 'trophy_areas?id=eq.' + id, null, true);
+    showStatus('Area deleted.', 'ok');
+    await loadAreas();
+  } catch (e) {
+    showStatus('Failed to delete area: ' + e.message, 'err');
+  }
+}
+
+/* ================================================================
+ *  BRACKETS
+ * ================================================================ */
+
+/** Populate the event dropdown in the Brackets tab */
+function populateBracketEventDropdown() {
+  const sel = document.getElementById('brk-event');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">-- Select Event --</option>' +
+    eventsCache.map(ev => `<option value="${ev.id}" ${String(ev.id) === current ? 'selected' : ''}>${esc(ev.name)}</option>`).join('');
+}
+
+/** Populate the area dropdown in the bracket form */
+function populateBracketAreaDropdown() {
+  const sel = document.getElementById('brk-area');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">-- None --</option>' +
+    areasCache.map(a => `<option value="${a.id}" ${String(a.id) === current ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
+}
+
+/** Called when the user picks an event in the Brackets tab */
+async function onBracketEventChange() {
+  const eventId = document.getElementById('brk-event').value;
+  const formWrap = document.getElementById('bracket-form-wrap');
+  const listWrap = document.getElementById('bracket-list-wrap');
+  if (!eventId) {
+    formWrap.classList.add('hidden');
+    listWrap.classList.add('hidden');
+    return;
+  }
+  formWrap.classList.remove('hidden');
+  listWrap.classList.remove('hidden');
+  cancelBracketEdit();
+  await loadBrackets(eventId);
+}
+
+async function loadBrackets(eventId) {
+  if (!eventId) eventId = document.getElementById('brk-event').value;
+  if (!eventId) return;
+  const loading = document.getElementById('brackets-loading');
+  const empty   = document.getElementById('brackets-empty');
+  const list    = document.getElementById('brackets-list');
+  loading.classList.remove('hidden');
+  empty.classList.add('hidden');
+  list.innerHTML = '';
+  try {
+    bracketsCache = await sb('GET', 'trophy_brackets?event_id=eq.' + eventId + '&select=*,trophy_areas(name),trophy_events(slug)&order=skill_level.asc');
+    renderBrackets();
+  } catch (e) {
+    showStatus('Failed to load brackets: ' + e.message, 'err');
+  } finally {
+    loading.classList.add('hidden');
+  }
+}
+
+function renderBrackets() {
+  const list  = document.getElementById('brackets-list');
+  const empty = document.getElementById('brackets-empty');
+  const ev = eventsCache.find(e => String(e.id) === document.getElementById('brk-event').value);
+  document.getElementById('bracket-list-title').textContent = ev ? ev.name + ' Brackets' : 'Brackets';
+
+  if (!bracketsCache.length) {
+    list.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  list.innerHTML = bracketsCache.map(b => {
+    const areaName = b.trophy_areas ? b.trophy_areas.name : '';
+    const trophyUrl = storageUrl(b.trophy_photo_path);
+    const bracketUrl = storageUrl(b.bracket_photo_path);
+    return `
+      <div class="bracket-item">
+        <span class="badge gold">SL ${esc(b.skill_level)}</span>
+        <div class="info">
+          <strong>${esc(b.winner_name)}</strong>
+          ${b.winner_team ? ' <span class="hint">(' + esc(b.winner_team) + ')</span>' : ''}
+          ${b.runner_up_name ? '<br><span class="hint">vs ' + esc(b.runner_up_name) + '</span>' : ''}
+          ${areaName ? '<br><span class="badge neutral">' + esc(areaName) + '</span>' : ''}
+          ${b.winner_players ? '<br><span class="hint" style="font-size:0.8rem">' + esc(b.winner_players) + '</span>' : ''}
+        </div>
+        <div class="photos">
+          ${trophyUrl ? '<img class="thumb" src="' + esc(trophyUrl) + '" alt="Trophy" onclick="window.open(\'' + esc(trophyUrl) + '\',\'_blank\')" title="Trophy photo">' : ''}
+          ${bracketUrl ? '<img class="thumb" src="' + esc(bracketUrl) + '" alt="Bracket" onclick="window.open(\'' + esc(bracketUrl) + '\',\'_blank\')" title="Bracket photo">' : ''}
+        </div>
+        <div class="actions">
+          <button class="btn btn-outline btn-sm" onclick="editBracket(${b.id})">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteBracket(${b.id})">Delete</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+/** Reset the bracket form to "Add" mode */
+function cancelBracketEdit() {
+  document.getElementById('brk-edit-id').value = '';
+  document.getElementById('bracket-form-title').textContent = 'Add Bracket';
+  document.getElementById('brk-sl').value = '';
+  document.getElementById('brk-winner').value = '';
+  document.getElementById('brk-team').value = '';
+  document.getElementById('brk-runner').value = '';
+  document.getElementById('brk-players').value = '';
+  document.getElementById('brk-area').value = '';
+  document.getElementById('brk-trophy-file').value = '';
+  document.getElementById('brk-bracket-file').value = '';
+  document.getElementById('trophy-label').textContent = 'Choose image...';
+  document.getElementById('trophy-label').classList.remove('has-file');
+  document.getElementById('bracket-label').textContent = 'Choose image...';
+  document.getElementById('bracket-label').classList.remove('has-file');
+  document.getElementById('trophy-preview').classList.add('hidden');
+  document.getElementById('trophy-preview').src = '';
+  document.getElementById('bracket-preview').classList.add('hidden');
+  document.getElementById('bracket-preview').src = '';
+  document.getElementById('brk-cancel').style.display = 'none';
+  document.getElementById('brk-submit').textContent = 'Save Bracket';
+}
+
+/** Pre-fill the form for editing */
+function editBracket(id) {
+  const b = bracketsCache.find(x => x.id === id);
+  if (!b) return;
+  document.getElementById('brk-edit-id').value = b.id;
+  document.getElementById('bracket-form-title').textContent = 'Edit Bracket (SL ' + b.skill_level + ')';
+  document.getElementById('brk-sl').value = b.skill_level || '';
+  document.getElementById('brk-winner').value = b.winner_name || '';
+  document.getElementById('brk-team').value = b.winner_team || '';
+  document.getElementById('brk-runner').value = b.runner_up_name || '';
+  document.getElementById('brk-players').value = b.winner_players || '';
+  document.getElementById('brk-area').value = b.area_id || '';
+  // Clear file inputs (user must re-select to replace)
+  document.getElementById('brk-trophy-file').value = '';
+  document.getElementById('brk-bracket-file').value = '';
+  // Show existing photos as previews
+  if (b.trophy_photo_path) {
+    document.getElementById('trophy-label').textContent = 'Current photo (re-select to replace)';
+    document.getElementById('trophy-label').classList.add('has-file');
+    document.getElementById('trophy-preview').src = storageUrl(b.trophy_photo_path);
+    document.getElementById('trophy-preview').classList.remove('hidden');
+  } else {
+    document.getElementById('trophy-label').textContent = 'Choose image...';
+    document.getElementById('trophy-label').classList.remove('has-file');
+    document.getElementById('trophy-preview').classList.add('hidden');
+  }
+  if (b.bracket_photo_path) {
+    document.getElementById('bracket-label').textContent = 'Current photo (re-select to replace)';
+    document.getElementById('bracket-label').classList.add('has-file');
+    document.getElementById('bracket-preview').src = storageUrl(b.bracket_photo_path);
+    document.getElementById('bracket-preview').classList.remove('hidden');
+  } else {
+    document.getElementById('bracket-label').textContent = 'Choose image...';
+    document.getElementById('bracket-label').classList.remove('has-file');
+    document.getElementById('bracket-preview').classList.add('hidden');
+  }
+  document.getElementById('brk-cancel').style.display = '';
+  document.getElementById('brk-submit').textContent = 'Update Bracket';
+  // Scroll to form
+  document.getElementById('bracket-form-wrap').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/** Save (create or update) a bracket */
+async function saveBracket() {
+  const eventId = document.getElementById('brk-event').value;
+  if (!eventId) return showStatus('Select an event first.', 'err');
+  const editId     = document.getElementById('brk-edit-id').value;
+  const sl         = parseInt(document.getElementById('brk-sl').value, 10);
+  const winnerName = document.getElementById('brk-winner').value.trim();
+  const team       = document.getElementById('brk-team').value.trim() || null;
+  const runner     = document.getElementById('brk-runner').value.trim() || null;
+  const players    = document.getElementById('brk-players').value.trim() || null;
+  const areaId     = document.getElementById('brk-area').value || null;
+  const trophyFile = document.getElementById('brk-trophy-file').files[0];
+  const bracketFile = document.getElementById('brk-bracket-file').files[0];
+
+  if (!sl || !winnerName) return showStatus('Skill level and winner name are required.', 'err');
+
+  const ev = eventsCache.find(e => String(e.id) === eventId);
+  const slug = ev ? ev.slug : 'unknown';
+  const btn = document.getElementById('brk-submit');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Saving...';
+
+  try {
+    let trophyPath  = null;
+    let bracketPath = null;
+
+    // If editing, carry forward existing paths (unless replaced)
+    if (editId) {
+      const existing = bracketsCache.find(x => x.id === parseInt(editId, 10));
+      if (existing) {
+        trophyPath  = existing.trophy_photo_path;
+        bracketPath = existing.bracket_photo_path;
+      }
+    }
+
+    // Determine the bracket ID for storage path naming
+    // For new brackets, we create the DB row first, then upload, then update paths
+    let bracketId = editId;
+
+    if (!editId) {
+      // CREATE: insert the row first to get the ID
+      const row = {
+        event_id: parseInt(eventId, 10),
+        skill_level: sl,
+        winner_name: winnerName,
+        winner_team: team,
+        winner_players: players,
+        runner_up_name: runner,
+        area_id: areaId ? parseInt(areaId, 10) : null,
+        trophy_photo_path: null,
+        bracket_photo_path: null
+      };
+      const created = await sb('POST', 'trophy_brackets', row, true);
+      bracketId = created[0].id;
+    }
+
+    // Upload images if provided
+    if (trophyFile) {
+      const resized = await resizeImage(trophyFile);
+      // Delete old photo if replacing
+      if (editId && trophyPath) await deleteStorageFile(trophyPath);
+      trophyPath = await uploadImage(resized, slug, bracketId, 'trophy');
+    }
+    if (bracketFile) {
+      const resized = await resizeImage(bracketFile);
+      if (editId && bracketPath) await deleteStorageFile(bracketPath);
+      bracketPath = await uploadImage(resized, slug, bracketId, 'bracket');
+    }
+
+    // UPDATE the row with photo paths (and other fields if editing)
+    const update = {
+      skill_level: sl,
+      winner_name: winnerName,
+      winner_team: team,
+      winner_players: players,
+      runner_up_name: runner,
+      area_id: areaId ? parseInt(areaId, 10) : null,
+      trophy_photo_path: trophyPath,
+      bracket_photo_path: bracketPath,
+      updated_at: new Date().toISOString()
+    };
+    await sb('PATCH', 'trophy_brackets?id=eq.' + bracketId, update, true);
+
+    showStatus(editId ? 'Bracket updated.' : 'Bracket added.', 'ok');
+    cancelBracketEdit();
+    await loadBrackets(eventId);
+  } catch (e) {
+    showStatus('Failed to save bracket: ' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = editId ? 'Update Bracket' : 'Save Bracket';
+  }
+}
+
+async function deleteBracket(id) {
+  const b = bracketsCache.find(x => x.id === id);
+  if (!b) return;
+  if (!confirm('Delete bracket SL ' + b.skill_level + ' — ' + b.winner_name + '?')) return;
+  try {
+    // Delete storage files
+    await deleteStorageFile(b.trophy_photo_path);
+    await deleteStorageFile(b.bracket_photo_path);
+    // Delete row
+    await sb('DELETE', 'trophy_brackets?id=eq.' + id, null, true);
+    showStatus('Bracket deleted.', 'ok');
+    await loadBrackets();
+  } catch (e) {
+    showStatus('Failed to delete bracket: ' + e.message, 'err');
+  }
+}
+
+/* ================================================================
+ *  INIT — Auth gate + load data
+ * ================================================================ */
+(async function init() {
+  const params = new URLSearchParams(window.location.search);
+  const key = params.get('key');
+  if (!key) return; // Show access denied
+
+  SB_WRITE = key;
+
+  // Validate the key by attempting a service_role query
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/trophy_events?select=id&limit=1', {
+      headers: {
+        'apikey': key,
+        'Authorization': 'Bearer ' + key
+      }
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+  } catch (e) {
+    showStatus('Invalid admin key. Access denied.', 'err');
+    return;
+  }
+
+  // Auth passed — show admin panel
+  document.getElementById('gate').classList.add('hidden');
+  document.getElementById('admin').classList.remove('hidden');
+
+  // Load events and areas in parallel
+  await Promise.all([loadEvents(), loadAreas()]);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!--
+  ============================================================================
+  Trophy Case — APA NW Challenge Winner Showcase (Standalone / GitHub Pages)
+  ============================================================================
+
+  PURPOSE:
+    Public-facing showcase page for APA NW Challenge event winners. Displays
+    champion cards grouped by event (tabs) and skill level (sections). Each
+    card shows a trophy photo, winner name, team info (for team events),
+    runner-up defeated, and league area. Bracket photos open in a lightbox.
+
+  ARCHITECTURE:
+    Pure static page. No backend proxy needed — reads directly from Supabase
+    REST API using the anon key. RLS policies allow public SELECT on all
+    trophy tables. Storage bucket is public for photo access.
+
+    Supabase REST (PostgREST) for data:
+      GET /rest/v1/trophy_events?active=eq.true&order=sort_order.asc
+      GET /rest/v1/trophy_brackets?select=*,trophy_areas(name)&event_id=eq.X&order=skill_level.asc
+
+    Supabase Storage for photos:
+      {SUPABASE_URL}/storage/v1/object/public/trophy-case-photos/{path}
+
+  HASH ROUTING:
+    URL hash maps to event slugs: #singles, #early-bird, etc.
+    Default: first event in the list.
+    Changing tabs updates the hash; loading with a hash selects that tab.
+
+  RESPONSIVE DESIGN:
+    - 16px base font (standalone standard)
+    - CSS @media queries: mobile (<768), tablet (768-1199), desktop (1200+)
+    - 1/2/3 column grid for winner cards
+    - Mobile-first CSS with min-width breakpoints
+    - 4px spacing grid, 48px min touch targets
+    - clamp() for fluid heading sizes
+
+  BRANDING:
+    Premium dark champion theme with gold accents. Hall-of-fame aesthetic.
+    Dark navy background, gold text/borders/badges, warm cream body text.
+
+  DATA FLOW:
+    Page load → fetch trophy_events → render tabs → select tab from hash
+    (or first) → fetch trophy_brackets for that event → group by
+    skill_level → render winner cards per group.
+
+  LIGHTBOX:
+    Click "View Bracket" → fixed overlay with bracket photo. Close via X
+    button, click outside image, or Escape key.
+
+  ============================================================================
+  -->
+  <title>Trophy Case — APA NW Challenge Champions</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    /* ── Reset & Variables ──────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --primary: #c2b280;
+      --primary-dark: #b5a574;
+      --bg: #0f0f1a;
+      --bg-card: #1a1a2e;
+      --bg-section: #12122a;
+      --text: #f0e6d3;
+      --text-muted: #8a8a9a;
+      --gold: #c2b280;
+      --gold-glow: rgba(194, 178, 128, 0.15);
+      --border: #2a2a40;
+      --radius: 12px;
+      --shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    html { font-size: 16px; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100svh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .hidden { display: none !important; }
+
+    /* ── Header ─────────────────────────────────────────────────────── */
+    .site-header {
+      position: relative;
+      background: linear-gradient(135deg, #0a0a18 0%, #16163a 50%, #0f0f1a 100%);
+      padding: 48px 24px 64px;
+      text-align: center;
+    }
+
+    .site-header .admin-link {
+      position: absolute;
+      top: 12px;
+      right: 16px;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      text-decoration: none;
+      opacity: 0.5;
+      transition: opacity 0.2s;
+    }
+    .site-header .admin-link:hover { opacity: 1; }
+
+    .site-header h1 {
+      font-size: clamp(2rem, 1.2rem + 3vw, 3.5rem);
+      font-weight: 700;
+      color: var(--gold);
+      letter-spacing: 0.04em;
+      text-shadow: 0 2px 12px rgba(194, 178, 128, 0.3);
+    }
+
+    .site-header .subtitle {
+      font-size: clamp(0.875rem, 0.7rem + 0.6vw, 1.125rem);
+      color: var(--text-muted);
+      margin-top: 8px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    /* Gold wave divider at bottom of header */
+    .header-wave {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 32px;
+      overflow: hidden;
+    }
+    .header-wave svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ── Tab Bar ─────────────────────────────────────────────────────── */
+    .tab-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      padding: 16px 16px 12px;
+      background: var(--bg-section);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .tab-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 0.9375rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+    }
+    .tab-btn:hover {
+      border-color: var(--gold);
+      color: var(--text);
+    }
+    .tab-btn.active {
+      background: var(--gold);
+      color: #0f0f1a;
+      border-color: var(--gold);
+      font-weight: 600;
+    }
+
+    /* ── Main Content ───────────────────────────────────────────────── */
+    .main-content {
+      flex: 1;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 24px 16px 48px;
+    }
+
+    /* ── Skill Level Section ────────────────────────────────────────── */
+    .sl-section {
+      margin-bottom: 48px;
+    }
+
+    .sl-heading {
+      font-size: clamp(1.25rem, 1rem + 1vw, 1.75rem);
+      font-weight: 600;
+      color: var(--gold);
+      padding-bottom: 8px;
+      margin-bottom: 24px;
+      border-bottom: 2px solid var(--gold);
+      display: inline-block;
+    }
+
+    /* ── Card Grid ──────────────────────────────────────────────────── */
+    .card-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 24px;
+    }
+
+    @media (min-width: 768px) {
+      .card-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (min-width: 1200px) {
+      .card-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+
+    /* ── Winner Card ────────────────────────────────────────────────── */
+    .winner-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      transition: border-color 0.3s, box-shadow 0.3s;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+
+    @media (hover: hover) {
+      .winner-card:hover {
+        border-color: var(--gold);
+        box-shadow: 0 6px 28px rgba(194, 178, 128, 0.2);
+      }
+    }
+
+    /* SL badge — top-right corner of card */
+    .sl-badge {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      background: var(--gold);
+      color: #0f0f1a;
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 6px;
+      z-index: 2;
+      line-height: 1;
+    }
+
+    /* Trophy photo container */
+    .trophy-photo-wrap {
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      background: #0a0a16;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .trophy-photo-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-bottom: 2px solid var(--gold);
+    }
+
+    .trophy-photo-wrap .no-photo {
+      color: var(--text-muted);
+      font-size: 3rem;
+    }
+
+    /* Card body */
+    .card-body {
+      padding: 20px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .winner-name {
+      font-size: clamp(1.125rem, 1rem + 0.5vw, 1.375rem);
+      font-weight: 700;
+      color: var(--gold);
+      line-height: 1.3;
+    }
+
+    .team-name {
+      font-size: 0.9375rem;
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .player-list {
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    .runner-up {
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    /* Area badge */
+    .area-badge {
+      display: inline-block;
+      border: 1px solid var(--gold);
+      color: var(--gold);
+      font-size: 0.75rem;
+      font-weight: 500;
+      padding: 4px 12px;
+      border-radius: 20px;
+      line-height: 1;
+      align-self: flex-start;
+    }
+
+    /* View Bracket button */
+    .card-actions {
+      padding: 0 20px 20px;
+    }
+
+    .view-bracket-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: transparent;
+      border: 1px solid var(--gold);
+      color: var(--gold);
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s;
+      min-height: 48px;
+    }
+    .view-bracket-btn:hover {
+      background: var(--gold);
+      color: #0f0f1a;
+    }
+
+    /* ── Empty State ────────────────────────────────────────────────── */
+    .empty-state {
+      text-align: center;
+      padding: 80px 24px;
+      color: var(--text-muted);
+      font-size: 1.25rem;
+    }
+    .empty-state .trophy-icon {
+      font-size: 3rem;
+      display: block;
+      margin-bottom: 16px;
+    }
+
+    /* ── Loading State ──────────────────────────────────────────────── */
+    .loading {
+      text-align: center;
+      padding: 80px 24px;
+      color: var(--text-muted);
+      font-size: 1rem;
+    }
+
+    /* ── Lightbox ───────────────────────────────────────────────────── */
+    .lightbox {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: rgba(0, 0, 0, 0.92);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .lightbox img {
+      max-width: 100%;
+      max-height: 90vh;
+      border-radius: 8px;
+      box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+    }
+
+    .lightbox-close {
+      position: absolute;
+      top: 16px;
+      right: 20px;
+      background: none;
+      border: none;
+      color: #fff;
+      font-size: 2rem;
+      cursor: pointer;
+      width: 48px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      transition: background 0.2s;
+    }
+    .lightbox-close:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    /* ── Footer ─────────────────────────────────────────────────────── */
+    .site-footer {
+      text-align: center;
+      padding: 24px 16px;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ═══ Header ═══ -->
+  <header class="site-header">
+    <a href="admin.html" class="admin-link">Admin</a>
+    <h1>Trophy Case</h1>
+    <p class="subtitle">APA NW Challenge Champions</p>
+    <div class="header-wave">
+      <svg viewBox="0 0 1440 32" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M0,16 C360,32 720,0 1080,16 C1260,24 1380,20 1440,16 L1440,32 L0,32 Z"
+              fill="var(--gold)" opacity="0.15"/>
+        <path d="M0,24 C480,8 960,32 1440,20 L1440,32 L0,32 Z"
+              fill="var(--gold)" opacity="0.08"/>
+      </svg>
+    </div>
+  </header>
+
+  <!-- ═══ Tabs ═══ -->
+  <nav class="tab-bar" id="tabBar">
+    <!-- Populated by JS -->
+  </nav>
+
+  <!-- ═══ Content ═══ -->
+  <main class="main-content" id="content">
+    <div class="loading">Loading champions...</div>
+  </main>
+
+  <!-- ═══ Lightbox (hidden by default) ═══ -->
+  <div class="lightbox hidden" id="lightbox">
+    <button class="lightbox-close" aria-label="Close">&times;</button>
+    <img src="" alt="Bracket photo" id="lightboxImg">
+  </div>
+
+  <!-- ═══ Footer ═══ -->
+  <footer class="site-footer">
+    APA NW Challenge 2026 &mdash; Trophy Case v0.1
+  </footer>
+
+  <script>
+    /* ══════════════════════════════════════════════════════════════════
+       Trophy Case — Client-Side Logic
+       ══════════════════════════════════════════════════════════════════
+       Fetches events & brackets from Supabase REST API. Renders tabs
+       and winner cards. Manages hash routing and lightbox overlay.
+       ════════════════════════════════════════════════════════════════ */
+
+    // ── Config ───────────────────────────────────────────────────────
+    const SUPABASE_URL = 'https://dqzbekoaysgaiqljueac.supabase.co';
+    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxemJla29heXNnYWlxbGp1ZWFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNzA5NzgsImV4cCI6MjA5MDc0Njk3OH0.cCdGxZ4zEFzU_r6lWSDeoNWG67Q4MSYCAtpds035dfU';
+    const STORAGE_BASE = SUPABASE_URL + '/storage/v1/object/public/trophy-case-photos/';
+
+    // ── State ────────────────────────────────────────────────────────
+    let events = [];          // trophy_events rows
+    let activeEventId = null; // currently selected event id
+
+    // ── DOM refs ─────────────────────────────────────────────────────
+    const tabBar      = document.getElementById('tabBar');
+    const content     = document.getElementById('content');
+    const lightbox    = document.getElementById('lightbox');
+    const lightboxImg = document.getElementById('lightboxImg');
+
+    // ── Utility: HTML-escape ─────────────────────────────────────────
+    function esc(str) {
+      if (str == null) return '';
+      const el = document.createElement('span');
+      el.textContent = String(str);
+      return el.innerHTML;
+    }
+
+    // ── Supabase REST helper ─────────────────────────────────────────
+    async function supaGet(path) {
+      const resp = await fetch(SUPABASE_URL + '/rest/v1/' + path, {
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': 'Bearer ' + SUPABASE_KEY
+        }
+      });
+      if (!resp.ok) throw new Error('Supabase ' + resp.status + ': ' + (await resp.text()));
+      return resp.json();
+    }
+
+    // ── Fetch Events & Render Tabs ───────────────────────────────────
+    async function loadEvents() {
+      try {
+        events = await supaGet('trophy_events?active=eq.true&order=sort_order.asc');
+      } catch (err) {
+        content.innerHTML = '<div class="empty-state">Failed to load events. Please try again later.</div>';
+        console.error('loadEvents error:', err);
+        return;
+      }
+
+      if (!events.length) {
+        tabBar.innerHTML = '';
+        content.innerHTML = '<div class="empty-state"><span class="trophy-icon">\u{1F3C6}</span>Champions coming soon...</div>';
+        return;
+      }
+
+      renderTabs();
+
+      // Determine which event to show from URL hash
+      const hash = location.hash.replace('#', '');
+      const matched = events.find(e => e.slug === hash);
+      selectEvent(matched ? matched.id : events[0].id);
+    }
+
+    function renderTabs() {
+      tabBar.innerHTML = events.map(ev =>
+        '<button class="tab-btn" data-id="' + ev.id + '" data-slug="' + esc(ev.slug) + '">'
+        + esc(ev.name) + '</button>'
+      ).join('');
+
+      tabBar.addEventListener('click', function(e) {
+        const btn = e.target.closest('.tab-btn');
+        if (!btn) return;
+        const id = Number(btn.dataset.id);
+        selectEvent(id);
+      });
+    }
+
+    // ── Select an Event Tab ──────────────────────────────────────────
+    function selectEvent(eventId) {
+      activeEventId = eventId;
+
+      // Update tab active states
+      tabBar.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.toggle('active', Number(btn.dataset.id) === eventId);
+      });
+
+      // Update URL hash
+      const ev = events.find(e => e.id === eventId);
+      if (ev) {
+        history.replaceState(null, '', '#' + ev.slug);
+      }
+
+      loadBrackets(eventId);
+    }
+
+    // ── Fetch & Render Brackets ──────────────────────────────────────
+    async function loadBrackets(eventId) {
+      content.innerHTML = '<div class="loading">Loading champions...</div>';
+
+      let brackets;
+      try {
+        brackets = await supaGet(
+          'trophy_brackets?select=*,trophy_areas(name)'
+          + '&event_id=eq.' + eventId
+          + '&order=skill_level.asc'
+        );
+      } catch (err) {
+        content.innerHTML = '<div class="empty-state">Failed to load brackets. Please try again later.</div>';
+        console.error('loadBrackets error:', err);
+        return;
+      }
+
+      if (!brackets.length) {
+        content.innerHTML = '<div class="empty-state"><span class="trophy-icon">\u{1F3C6}</span>Champions coming soon...</div>';
+        return;
+      }
+
+      // Group by skill_level
+      const groups = new Map();
+      for (const b of brackets) {
+        const sl = b.skill_level;
+        if (!groups.has(sl)) groups.set(sl, []);
+        groups.get(sl).push(b);
+      }
+
+      // Render
+      let html = '';
+      for (const [sl, items] of groups) {
+        html += '<section class="sl-section">';
+        html += '<h2 class="sl-heading">Skill Level ' + esc(String(sl)) + '</h2>';
+        html += '<div class="card-grid">';
+        for (const b of items) {
+          html += renderCard(b, sl);
+        }
+        html += '</div></section>';
+      }
+
+      content.innerHTML = html;
+
+      // Attach bracket-view listeners
+      content.querySelectorAll('[data-bracket-photo]').forEach(btn => {
+        btn.addEventListener('click', function() {
+          openLightbox(this.dataset.bracketPhoto);
+        });
+      });
+    }
+
+    // ── Render a Single Winner Card ──────────────────────────────────
+    function renderCard(b, sl) {
+      const areaName = (b.trophy_areas && b.trophy_areas.name) ? b.trophy_areas.name : null;
+
+      // Trophy photo
+      let photoHtml;
+      if (b.trophy_photo_path) {
+        photoHtml = '<img src="' + esc(STORAGE_BASE + b.trophy_photo_path) + '" alt="Trophy photo for ' + esc(b.winner_name) + '" loading="lazy">';
+      } else {
+        photoHtml = '<span class="no-photo">\u{1F3C6}</span>';
+      }
+
+      // Players list (for team events)
+      let playersHtml = '';
+      if (b.winner_players) {
+        const names = b.winner_players.split(',').map(n => esc(n.trim())).filter(Boolean);
+        playersHtml = '<div class="player-list">' + names.join(' &bull; ') + '</div>';
+      }
+
+      // Runner-up
+      let runnerHtml = '';
+      if (b.runner_up_name) {
+        runnerHtml = '<div class="runner-up">defeated ' + esc(b.runner_up_name) + '</div>';
+      }
+
+      // Area badge
+      let areaHtml = '';
+      if (areaName) {
+        areaHtml = '<span class="area-badge">' + esc(areaName) + '</span>';
+      }
+
+      // Bracket button
+      let bracketHtml = '';
+      if (b.bracket_photo_path) {
+        bracketHtml = '<div class="card-actions">'
+          + '<button class="view-bracket-btn" data-bracket-photo="' + esc(STORAGE_BASE + b.bracket_photo_path) + '">'
+          + '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="14" height="14" rx="2"/><path d="M1 6h14M6 1v14"/></svg>'
+          + 'View Bracket</button></div>';
+      }
+
+      return '<article class="winner-card">'
+        + '<span class="sl-badge">SL ' + esc(String(sl)) + '</span>'
+        + '<div class="trophy-photo-wrap">' + photoHtml + '</div>'
+        + '<div class="card-body">'
+          + '<div class="winner-name">' + esc(b.winner_name) + '</div>'
+          + (b.winner_team ? '<div class="team-name">' + esc(b.winner_team) + '</div>' : '')
+          + playersHtml
+          + runnerHtml
+          + areaHtml
+        + '</div>'
+        + bracketHtml
+        + '</article>';
+    }
+
+    // ── Lightbox ─────────────────────────────────────────────────────
+    function openLightbox(src) {
+      lightboxImg.src = src;
+      lightbox.classList.remove('hidden');
+      document.body.style.overflow = 'hidden';
+    }
+
+    function closeLightbox() {
+      lightbox.classList.add('hidden');
+      lightboxImg.src = '';
+      document.body.style.overflow = '';
+    }
+
+    // Close on X button click
+    lightbox.querySelector('.lightbox-close').addEventListener('click', closeLightbox);
+
+    // Close on click outside image
+    lightbox.addEventListener('click', function(e) {
+      if (e.target === lightbox) closeLightbox();
+    });
+
+    // Close on Escape key
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && !lightbox.classList.contains('hidden')) {
+        closeLightbox();
+      }
+    });
+
+    // ── Hash Change Listener ─────────────────────────────────────────
+    window.addEventListener('hashchange', function() {
+      const hash = location.hash.replace('#', '');
+      const matched = events.find(e => e.slug === hash);
+      if (matched && matched.id !== activeEventId) {
+        selectEvent(matched.id);
+      }
+    });
+
+    // ── Init ─────────────────────────────────────────────────────────
+    loadEvents();
+  </script>
+</body>
+</html>
