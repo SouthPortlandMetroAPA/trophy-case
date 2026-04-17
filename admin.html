@@ -488,6 +488,13 @@
               <input type="text" id="evt-slug" placeholder="auto-generated">
             </div>
           </div>
+          <div class="form-group" style="display:flex;align-items:center;gap:10px">
+            <label class="toggle">
+              <input type="checkbox" id="evt-has-sl" checked>
+              <span class="slider"></span>
+            </label>
+            <label for="evt-has-sl" style="margin:0;cursor:pointer">Has skill levels (off for Scotch Doubles / team events)</label>
+          </div>
           <button class="btn btn-primary" onclick="addEvent()">Add Event</button>
         </div>
         <div class="card">
@@ -501,6 +508,7 @@
                   <th>Slug</th>
                   <th>Sort</th>
                   <th>Active</th>
+                  <th>SL</th>
                   <th></th>
                 </tr>
               </thead>
@@ -556,7 +564,8 @@
         <div id="bracket-form-wrap" class="card hidden">
           <h2 id="bracket-form-title">Add Bracket</h2>
           <input type="hidden" id="brk-edit-id" value="">
-          <div class="form-row">
+          <!-- SL fields — hidden when the selected event has has_skill_levels=false -->
+          <div class="form-row" id="brk-sl-row">
             <div class="form-group" style="max-width:120px">
               <label for="brk-sl">Skill Level</label>
               <input type="number" id="brk-sl" min="1" max="9" placeholder="e.g. 2">
@@ -565,24 +574,30 @@
               <label for="brk-sl-max">SL Max <span style="font-weight:400;opacity:0.6">(optional)</span></label>
               <input type="number" id="brk-sl-max" min="1" max="9" placeholder="e.g. 3">
             </div>
-            <div class="form-group">
-              <label for="brk-winner">Winner Name</label>
-              <input type="text" id="brk-winner" placeholder="Player or team display name">
-            </div>
           </div>
+          <!-- Champion / winner — labels swap to "Winning Team" for no-SL events -->
           <div class="form-row">
             <div class="form-group">
-              <label for="brk-team">Team Name <span class="hint">(optional)</span></label>
-              <input type="text" id="brk-team" placeholder="Team name for team events">
+              <label for="brk-winner" id="brk-winner-label">Winner Name</label>
+              <input type="text" id="brk-winner" placeholder="Player or team display name">
             </div>
             <div class="form-group">
-              <label for="brk-runner">Runner-up <span class="hint">(optional)</span></label>
-              <input type="text" id="brk-runner" placeholder="Runner-up name">
+              <label for="brk-team" id="brk-team-label">Team Name <span class="hint">(optional)</span></label>
+              <input type="text" id="brk-team" placeholder="Team name for team events">
             </div>
           </div>
           <div class="form-group">
-            <label for="brk-players">Team Players <span class="hint">(optional, comma-separated)</span></label>
+            <label for="brk-players" id="brk-players-label">Team Players <span class="hint">(optional, comma-separated)</span></label>
             <textarea id="brk-players" placeholder="Player 1, Player 2, Player 3"></textarea>
+          </div>
+          <!-- Runner-up — gets its own labeled group so it mirrors the champion -->
+          <div class="form-group">
+            <label for="brk-runner" id="brk-runner-label">Runner-up <span class="hint">(optional)</span></label>
+            <input type="text" id="brk-runner" placeholder="Runner-up name">
+          </div>
+          <div class="form-group">
+            <label for="brk-runner-players" id="brk-runner-players-label">Runner-up Players <span class="hint">(optional, comma-separated)</span></label>
+            <textarea id="brk-runner-players" placeholder="Player 1, Player 2"></textarea>
           </div>
           <div class="form-group">
             <label for="brk-area">League Area <span class="hint">(optional)</span></label>
@@ -592,13 +607,13 @@
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label>Champion Photo <span class="hint">(1st place)</span></label>
+              <label id="brk-trophy-photo-label">Champion Photo <span class="hint">(1st place)</span></label>
               <label class="file-label" id="trophy-label" for="brk-trophy-file">Choose image...</label>
               <input type="file" id="brk-trophy-file" class="file-input-hidden" accept="image/*" onchange="onFileSelected(this,'trophy-label','trophy-preview')">
               <img id="trophy-preview" class="img-preview hidden">
             </div>
             <div class="form-group">
-              <label>Runner-up Photo <span class="hint">(2nd place, optional)</span></label>
+              <label id="brk-runnerup-photo-label">Runner-up Photo <span class="hint">(2nd place, optional)</span></label>
               <label class="file-label" id="runnerup-label" for="brk-runnerup-file">Choose image...</label>
               <input type="file" id="brk-runnerup-file" class="file-input-hidden" accept="image/*" onchange="onFileSelected(this,'runnerup-label','runnerup-preview')">
               <img id="runnerup-preview" class="img-preview hidden">
@@ -627,7 +642,7 @@
     </div><!-- /admin -->
   </div><!-- /page -->
 
-  <div class="footer">Trophy Case Admin v0.4</div>
+  <div class="footer">Trophy Case Admin v0.5</div>
 
 <script>
 /* ============================================================
@@ -917,6 +932,12 @@ function renderEvents() {
           <span class="slider"></span>
         </label>
       </td>
+      <td>
+        <label class="toggle" title="Has skill levels">
+          <input type="checkbox" ${ev.has_skill_levels !== false ? 'checked' : ''} onchange="toggleEventHasSL(${ev.id}, this.checked)">
+          <span class="slider"></span>
+        </label>
+      </td>
       <td><button class="btn btn-danger btn-sm" onclick="deleteEvent(${ev.id}, '${esc(ev.name)}')">Delete</button></td>
     </tr>
   `).join('');
@@ -925,15 +946,37 @@ function renderEvents() {
 async function addEvent() {
   const name = document.getElementById('evt-name').value.trim();
   const slug = document.getElementById('evt-slug').value.trim() || toSlug(name);
+  const hasSL = document.getElementById('evt-has-sl').checked;
   if (!name || !slug) return showStatus('Event name and slug are required.', 'err');
   try {
-    await sb('POST', 'trophy_events', { name, slug, sort_order: eventsCache.length, active: true }, true);
+    await sb('POST', 'trophy_events', {
+      name, slug,
+      sort_order: eventsCache.length,
+      active: true,
+      has_skill_levels: hasSL
+    }, true);
     document.getElementById('evt-name').value = '';
     document.getElementById('evt-slug').value = '';
+    document.getElementById('evt-has-sl').checked = true;
     showStatus('Event added.', 'ok');
     await loadEvents();
   } catch (e) {
     showStatus('Failed to add event: ' + e.message, 'err');
+  }
+}
+
+async function toggleEventHasSL(id, hasSL) {
+  try {
+    await sb('PATCH', 'trophy_events?id=eq.' + id, { has_skill_levels: hasSL }, true);
+    showStatus('Event updated.', 'ok');
+    const ev = eventsCache.find(e => e.id === id);
+    if (ev) ev.has_skill_levels = hasSL;
+    // If the brackets tab is showing this event, re-apply labels/layout
+    const selEventId = document.getElementById('brk-event').value;
+    if (String(id) === selEventId) applyEventModeToBracketForm();
+  } catch (e) {
+    showStatus('Failed to update event: ' + e.message, 'err');
+    await loadEvents();
   }
 }
 
@@ -1091,7 +1134,53 @@ async function onBracketEventChange() {
   formWrap.classList.remove('hidden');
   listWrap.classList.remove('hidden');
   cancelBracketEdit();
+  applyEventModeToBracketForm();
   await loadBrackets(eventId);
+}
+
+/**
+ * Adjust the bracket form for the currently selected event's mode:
+ * - has_skill_levels=true  → show SL inputs, labels read "Winner Name" etc.
+ * - has_skill_levels=false → hide SL row, re-label inputs to Team-centric
+ *   wording (Winning Team / Runner-up Team / Players / Team Photo).
+ *
+ * Called when the event changes and when the has_skill_levels toggle flips.
+ * Pure UI — does not touch data or saved values.
+ */
+function applyEventModeToBracketForm() {
+  const selEventId = document.getElementById('brk-event').value;
+  const ev = eventsCache.find(e => String(e.id) === selEventId);
+  const hasSL = !ev || ev.has_skill_levels !== false;  // default true if unknown
+
+  // SL fields row
+  const slRow = document.getElementById('brk-sl-row');
+  if (slRow) slRow.style.display = hasSL ? '' : 'none';
+  if (!hasSL) {
+    // Clear SL values so they don't leak from a previous event context
+    document.getElementById('brk-sl').value = '';
+    document.getElementById('brk-sl-max').value = '';
+  }
+
+  // Label swaps — team-event wording when SL is off
+  const labels = {
+    'brk-winner-label':         hasSL ? 'Winner Name'    : 'Winning Team Name',
+    'brk-team-label':           hasSL ? 'Team Name <span class="hint">(optional)</span>'
+                                      : 'Winning Team Label <span class="hint">(optional)</span>',
+    'brk-players-label':        hasSL ? 'Team Players <span class="hint">(optional, comma-separated)</span>'
+                                      : 'Winning Team Players <span class="hint">(comma-separated)</span>',
+    'brk-runner-label':         hasSL ? 'Runner-up <span class="hint">(optional)</span>'
+                                      : 'Runner-up Team Name <span class="hint">(optional)</span>',
+    'brk-runner-players-label': hasSL ? 'Runner-up Players <span class="hint">(optional, comma-separated)</span>'
+                                      : 'Runner-up Team Players <span class="hint">(comma-separated)</span>',
+    'brk-trophy-photo-label':   hasSL ? 'Champion Photo <span class="hint">(1st place)</span>'
+                                      : 'Winning Team Photo',
+    'brk-runnerup-photo-label': hasSL ? 'Runner-up Photo <span class="hint">(2nd place, optional)</span>'
+                                      : 'Runner-up Team Photo <span class="hint">(optional)</span>',
+  };
+  for (const id in labels) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = labels[id];
+  }
 }
 
 async function loadBrackets(eventId) {
@@ -1104,7 +1193,7 @@ async function loadBrackets(eventId) {
   empty.classList.add('hidden');
   list.innerHTML = '';
   try {
-    bracketsCache = await sb('GET', 'trophy_brackets?event_id=eq.' + eventId + '&select=*,trophy_areas(name),trophy_events(slug)&order=skill_level.asc');
+    bracketsCache = await sb('GET', 'trophy_brackets?event_id=eq.' + eventId + '&select=*,trophy_areas(name),trophy_events(slug)&order=skill_level.asc.nullslast,id.asc');
     renderBrackets();
   } catch (e) {
     showStatus('Failed to load brackets: ' + e.message, 'err');
@@ -1131,15 +1220,20 @@ function renderBrackets() {
     const runnerUrl   = storageUrl(b.runner_up_photo_path);
     const bracketArr  = Array.isArray(b.bracket_photo_paths) ? b.bracket_photo_paths : [];
     const firstBracket = bracketArr.length ? storageUrl(bracketArr[0]) : '';
+    // SL badge only for events that use skill levels; no-SL brackets get a neutral "TEAM" badge so the row still has a leading chip
+    const slBadge = (b.skill_level != null)
+      ? '<span class="badge gold">SL ' + esc(b.skill_level) + (b.skill_level_max ? '-' + esc(b.skill_level_max) : '') + '</span>'
+      : '<span class="badge neutral">TEAM</span>';
     return `
       <div class="bracket-item">
-        <span class="badge gold">SL ${esc(b.skill_level)}${b.skill_level_max ? '-' + esc(b.skill_level_max) : ''}</span>
+        ${slBadge}
         <div class="info">
           <strong>${esc(b.winner_name)}</strong>
           ${b.winner_team ? ' <span class="hint">(' + esc(b.winner_team) + ')</span>' : ''}
           ${b.runner_up_name ? '<br><span class="hint">vs ' + esc(b.runner_up_name) + '</span>' : ''}
           ${areaName ? '<br><span class="badge neutral">' + esc(areaName) + '</span>' : ''}
-          ${b.winner_players ? '<br><span class="hint" style="font-size:0.8rem">' + esc(b.winner_players) + '</span>' : ''}
+          ${b.winner_players ? '<br><span class="hint" style="font-size:0.8rem">Winners: ' + esc(b.winner_players) + '</span>' : ''}
+          ${b.runner_up_players ? '<br><span class="hint" style="font-size:0.8rem">Runner-up: ' + esc(b.runner_up_players) + '</span>' : ''}
         </div>
         <div class="photos">
           ${trophyUrl ? '<img class="thumb" src="' + esc(trophyUrl) + '" alt="Champion" onclick="window.open(\'' + esc(trophyUrl) + '\',\'_blank\')" title="Champion photo">' : ''}
@@ -1165,6 +1259,7 @@ function cancelBracketEdit() {
   document.getElementById('brk-team').value = '';
   document.getElementById('brk-runner').value = '';
   document.getElementById('brk-players').value = '';
+  document.getElementById('brk-runner-players').value = '';
   document.getElementById('brk-area').value = '';
   document.getElementById('brk-trophy-file').value = '';
   document.getElementById('brk-runnerup-file').value = '';
@@ -1188,14 +1283,22 @@ function editBracket(id) {
   const b = bracketsCache.find(x => x.id === id);
   if (!b) return;
   document.getElementById('brk-edit-id').value = b.id;
-  var slLabel = b.skill_level_max ? 'SL ' + b.skill_level + '-' + b.skill_level_max : 'SL ' + b.skill_level;
-  document.getElementById('bracket-form-title').textContent = 'Edit Bracket (' + slLabel + ')';
+  // Title — SL label only makes sense when the event uses SLs
+  var title = 'Edit Bracket';
+  if (b.skill_level != null) {
+    var slLabel = b.skill_level_max ? 'SL ' + b.skill_level + '-' + b.skill_level_max : 'SL ' + b.skill_level;
+    title += ' (' + slLabel + ')';
+  } else if (b.winner_name) {
+    title += ' (' + b.winner_name + ')';
+  }
+  document.getElementById('bracket-form-title').textContent = title;
   document.getElementById('brk-sl').value = b.skill_level || '';
   document.getElementById('brk-sl-max').value = b.skill_level_max || '';
   document.getElementById('brk-winner').value = b.winner_name || '';
   document.getElementById('brk-team').value = b.winner_team || '';
   document.getElementById('brk-runner').value = b.runner_up_name || '';
   document.getElementById('brk-players').value = b.winner_players || '';
+  document.getElementById('brk-runner-players').value = b.runner_up_players || '';
   document.getElementById('brk-area').value = b.area_id || '';
   // Clear file inputs (user must re-select to replace)
   document.getElementById('brk-trophy-file').value = '';
@@ -1237,21 +1340,31 @@ function editBracket(id) {
 async function saveBracket() {
   const eventId = document.getElementById('brk-event').value;
   if (!eventId) return showStatus('Select an event first.', 'err');
-  const editId       = document.getElementById('brk-edit-id').value;
-  const sl           = parseInt(document.getElementById('brk-sl').value, 10);
-  const slMax        = parseInt(document.getElementById('brk-sl-max').value, 10) || null;
-  const winnerName   = document.getElementById('brk-winner').value.trim();
-  const team         = document.getElementById('brk-team').value.trim() || null;
-  const runner       = document.getElementById('brk-runner').value.trim() || null;
-  const players      = document.getElementById('brk-players').value.trim() || null;
-  const areaId       = document.getElementById('brk-area').value || null;
-  const trophyFile   = document.getElementById('brk-trophy-file').files[0];
-  const runnerupFile = document.getElementById('brk-runnerup-file').files[0];
-
-  if (!sl || !winnerName) return showStatus('Skill level and winner name are required.', 'err');
-
   const ev = eventsCache.find(e => String(e.id) === eventId);
   const slug = ev ? ev.slug : 'unknown';
+  const hasSL = !ev || ev.has_skill_levels !== false;
+
+  const editId        = document.getElementById('brk-edit-id').value;
+  const slRaw         = parseInt(document.getElementById('brk-sl').value, 10);
+  const sl            = hasSL ? (isNaN(slRaw) ? null : slRaw) : null;
+  const slMax         = hasSL ? (parseInt(document.getElementById('brk-sl-max').value, 10) || null) : null;
+  const winnerName    = document.getElementById('brk-winner').value.trim();
+  const team          = document.getElementById('brk-team').value.trim() || null;
+  const runner        = document.getElementById('brk-runner').value.trim() || null;
+  const players       = document.getElementById('brk-players').value.trim() || null;
+  const runnerPlayers = document.getElementById('brk-runner-players').value.trim() || null;
+  const areaId        = document.getElementById('brk-area').value || null;
+  const trophyFile    = document.getElementById('brk-trophy-file').files[0];
+  const runnerupFile  = document.getElementById('brk-runnerup-file').files[0];
+
+  // Validation — SL only required when the event uses SLs
+  if (!winnerName) {
+    return showStatus(hasSL ? 'Winner name is required.' : 'Winning team name is required.', 'err');
+  }
+  if (hasSL && !sl) {
+    return showStatus('Skill level is required for this event.', 'err');
+  }
+
   const btn = document.getElementById('brk-submit');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Saving...';
@@ -1284,6 +1397,7 @@ async function saveBracket() {
         winner_team: team,
         winner_players: players,
         runner_up_name: runner,
+        runner_up_players: runnerPlayers,
         area_id: areaId ? parseInt(areaId, 10) : null,
         trophy_photo_path: null,
         runner_up_photo_path: null,
@@ -1336,6 +1450,7 @@ async function saveBracket() {
       winner_team: team,
       winner_players: players,
       runner_up_name: runner,
+      runner_up_players: runnerPlayers,
       area_id: areaId ? parseInt(areaId, 10) : null,
       trophy_photo_path: trophyPath,
       runner_up_photo_path: runnerUpPath,

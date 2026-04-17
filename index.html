@@ -564,7 +564,7 @@
 
   <!-- ═══ Footer ═══ -->
   <footer class="site-footer">
-    APA NW Challenge 2026 &mdash; Trophy Case v0.4
+    APA NW Challenge 2026 &mdash; Trophy Case v0.5
   </footer>
 
   <script>
@@ -621,7 +621,7 @@
     // ── Fetch Events & Render Tabs ───────────────────────────────────
     async function loadEvents() {
       try {
-        events = await supaGet('trophy_events?active=eq.true&order=sort_order.asc');
+        events = await supaGet('trophy_events?active=eq.true&select=id,name,slug,has_skill_levels&order=sort_order.asc');
       } catch (err) {
         content.innerHTML = '<div class="empty-state">Failed to load events. Please try again later.</div>';
         console.error('loadEvents error:', err);
@@ -683,7 +683,7 @@
         brackets = await supaGet(
           'trophy_brackets?select=*,trophy_areas(name)'
           + '&event_id=eq.' + eventId
-          + '&order=skill_level.asc'
+          + '&order=skill_level.asc.nullslast,id.asc'
         );
       } catch (err) {
         content.innerHTML = '<div class="empty-state">Failed to load brackets. Please try again later.</div>';
@@ -696,26 +696,38 @@
         return;
       }
 
-      // Group by skill_level display key (supports ranges like "2-3")
-      const groups = new Map();
-      for (const b of brackets) {
-        const slKey = b.skill_level_max
-          ? b.skill_level + '-' + b.skill_level_max
-          : String(b.skill_level);
-        if (!groups.has(slKey)) groups.set(slKey, []);
-        groups.get(slKey).push(b);
-      }
+      // Is this a no-SL event (e.g. Scotch Doubles / Tournament of the Pool Gods)?
+      const activeEv = events.find(e => e.id === activeEventId);
+      const hasSL = !activeEv || activeEv.has_skill_levels !== false;
 
-      // Render
       let html = '';
-      for (const [slKey, items] of groups) {
+      if (!hasSL) {
+        // Flat grid — no SL section headings, no SL badges on cards
         html += '<section class="sl-section">';
-        html += '<h2 class="sl-heading">Skill Level ' + esc(slKey) + '</h2>';
         html += '<div class="card-grid">';
-        for (const b of items) {
-          html += renderCard(b, slKey);
+        for (const b of brackets) {
+          html += renderCard(b, null);
         }
         html += '</div></section>';
+      } else {
+        // Group by skill_level display key (supports ranges like "2-3")
+        const groups = new Map();
+        for (const b of brackets) {
+          const slKey = b.skill_level_max
+            ? b.skill_level + '-' + b.skill_level_max
+            : String(b.skill_level);
+          if (!groups.has(slKey)) groups.set(slKey, []);
+          groups.get(slKey).push(b);
+        }
+        for (const [slKey, items] of groups) {
+          html += '<section class="sl-section">';
+          html += '<h2 class="sl-heading">Skill Level ' + esc(slKey) + '</h2>';
+          html += '<div class="card-grid">';
+          for (const b of items) {
+            html += renderCard(b, slKey);
+          }
+          html += '</div></section>';
+        }
       }
 
       content.innerHTML = html;
@@ -794,6 +806,11 @@
           const names = b.winner_players.split(',').map(n => esc(n.trim())).filter(Boolean);
           championDetails += '<div class="player-list">' + names.join(' &bull; ') + '</div>';
         }
+        let runnerUpDetails = '';
+        if (b.runner_up_players) {
+          const rnames = b.runner_up_players.split(',').map(n => esc(n.trim())).filter(Boolean);
+          runnerUpDetails = '<div class="player-list">' + rnames.join(' &bull; ') + '</div>';
+        }
         bodyHtml = '<div class="card-body">'
           + '<div class="finishers">'
             + '<div class="finisher-col">'
@@ -804,6 +821,7 @@
             + '<div class="finisher-col">'
               + '<div class="finisher-label">Runner-up</div>'
               + '<div class="finisher-name runner-up">' + esc(b.runner_up_name || '\u2014') + '</div>'
+              + runnerUpDetails
             + '</div>'
           + '</div>'
           + (areaName ? '<span class="area-badge">' + esc(areaName) + '</span>' : '')
@@ -836,8 +854,15 @@
         + '</button></div>';
       }
 
+      // SL badge only for events that use skill levels. For no-SL events
+      // (sl === null, e.g. Scotch Doubles) we omit the badge entirely so
+      // the card composition stays clean.
+      const slBadgeHtml = (sl != null && sl !== '')
+        ? '<span class="sl-badge">SL ' + esc(String(sl)) + '</span>'
+        : '';
+
       return '<article class="winner-card">'
-        + '<span class="sl-badge">SL ' + esc(String(sl)) + '</span>'
+        + slBadgeHtml
         + photoHtml
         + bodyHtml
         + bracketHtml
