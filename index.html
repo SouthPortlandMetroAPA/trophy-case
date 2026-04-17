@@ -38,17 +38,25 @@
     - clamp() for fluid heading sizes
 
   BRANDING:
-    Premium dark champion theme with gold accents. Hall-of-fame aesthetic.
-    Dark navy background, gold text/borders/badges, warm cream body text.
+    Premium dark champion theme with gold (champion) + silver (runner-up)
+    accents. Hall-of-fame aesthetic. Dark navy background, gold/silver
+    text/borders/badges, warm cream body text.
 
   DATA FLOW:
     Page load → fetch trophy_events → render tabs → select tab from hash
     (or first) → fetch trophy_brackets for that event → group by
     skill_level → render winner cards per group.
 
-  LIGHTBOX:
-    Click "View Bracket" → fixed overlay with bracket photo. Close via X
-    button, click outside image, or Escape key.
+  CARD LAYOUT (v0.4+):
+    Photos: single champion photo, or two-up champion + runner-up when
+    both exist (equal emphasis with labels). Runner-up name adopts a
+    second column in the body so 1st & 2nd place are equally surfaced.
+
+  LIGHTBOX (v0.4+):
+    Gallery viewer — opens with a single image (champion/runner-up
+    click) or an array of bracket photos ("View Brackets (N)" button).
+    Prev/next arrows + counter + keyboard (arrow keys) + touch swipe.
+    Close via X, click outside image, or Escape.
 
   ============================================================================
   -->
@@ -69,6 +77,8 @@
       --text-muted: #8a8a9a;
       --gold: #c2b280;
       --gold-glow: rgba(194, 178, 128, 0.15);
+      --silver: #c0c0c0;               /* runner-up accent — equal weight to gold */
+      --silver-muted: #d6d6d6;
       --border: #2a2a40;
       --radius: 12px;
       --shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
@@ -248,26 +258,55 @@
       line-height: 1;
     }
 
-    /* Trophy photo container */
-    .trophy-photo-wrap {
-      width: 100%;
+    /* Photo grid — 1-up by default, 2-up when both champion + runner-up photos exist */
+    .photo-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      background: #0a0a16;
+    }
+    .photo-grid.two-up {
+      grid-template-columns: 1fr 1fr;
+      gap: 2px;
+    }
+
+    .photo-slot {
+      position: relative;
       background: #0a0a16;
       display: flex;
       align-items: center;
       justify-content: center;
+      min-height: 120px;
     }
-
-    .trophy-photo-wrap img {
+    .photo-slot img {
       width: 100%;
       height: auto;
       display: block;
       border-bottom: 2px solid var(--gold);
     }
-
-    .trophy-photo-wrap .no-photo {
+    .photo-slot.runner-up-slot img {
+      border-bottom-color: var(--silver);
+    }
+    .photo-slot .no-photo {
       color: var(--text-muted);
       font-size: 3rem;
+      padding: 32px 0;
     }
+    .photo-label {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      font-size: 0.68rem;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      padding: 4px 10px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      line-height: 1;
+      z-index: 2;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+    }
+    .photo-label.champion { background: var(--gold); color: #0f0f1a; }
+    .photo-label.runner-up { background: var(--silver); color: #0f0f1a; }
 
     /* Card body */
     .card-body {
@@ -275,9 +314,38 @@
       flex: 1;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 10px;
     }
 
+    /* Two-column finisher layout (champion | runner-up) — used whenever a runner-up is present */
+    .finishers {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .finisher-col {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+    .finisher-label {
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+    .finisher-name {
+      font-size: clamp(1rem, 0.9rem + 0.4vw, 1.25rem);
+      font-weight: 700;
+      line-height: 1.25;
+      word-break: break-word;
+    }
+    .finisher-name.champion { color: var(--gold); }
+    .finisher-name.runner-up { color: var(--silver-muted); }
+
+    /* Single-champion layout fallback (no runner-up) */
     .winner-name {
       font-size: clamp(1.125rem, 1rem + 0.5vw, 1.375rem);
       font-weight: 700;
@@ -295,12 +363,6 @@
       font-size: 0.8125rem;
       color: var(--text-muted);
       line-height: 1.4;
-    }
-
-    .runner-up {
-      font-size: 0.8125rem;
-      color: var(--text-muted);
-      font-style: italic;
     }
 
     /* Area badge */
@@ -397,10 +459,62 @@
       justify-content: center;
       border-radius: 50%;
       transition: background 0.2s;
+      z-index: 2;
     }
     .lightbox-close:hover {
       background: rgba(255, 255, 255, 0.15);
     }
+
+    /* Prev/next nav arrows */
+    .lightbox-nav {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      background: rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.15);
+      color: #fff;
+      width: 56px;
+      height: 56px;
+      min-width: 48px;
+      min-height: 48px;
+      border-radius: 50%;
+      font-size: 1.75rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s, border-color 0.2s;
+      z-index: 2;
+    }
+    .lightbox-nav:hover {
+      background: rgba(0,0,0,0.8);
+      border-color: var(--gold);
+    }
+    .lightbox-nav.prev { left: 16px; }
+    .lightbox-nav.next { right: 16px; }
+    @media (max-width: 600px) {
+      .lightbox-nav { width: 48px; height: 48px; font-size: 1.5rem; }
+      .lightbox-nav.prev { left: 8px; }
+      .lightbox-nav.next { right: 8px; }
+    }
+
+    /* Counter in top-left */
+    .lightbox-counter {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      color: var(--gold);
+      font-size: 0.875rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      background: rgba(0,0,0,0.55);
+      padding: 6px 12px;
+      border-radius: 20px;
+      z-index: 2;
+    }
+
+    .lightbox.single-image .lightbox-nav,
+    .lightbox.single-image .lightbox-counter { display: none; }
 
     /* ── Footer ─────────────────────────────────────────────────────── */
     .site-footer {
@@ -441,13 +555,16 @@
 
   <!-- ═══ Lightbox (hidden by default) ═══ -->
   <div class="lightbox hidden" id="lightbox">
-    <button class="lightbox-close" aria-label="Close">&times;</button>
-    <img src="" alt="Bracket photo" id="lightboxImg">
+    <button class="lightbox-close" aria-label="Close" id="lightboxClose">&times;</button>
+    <button class="lightbox-nav prev" aria-label="Previous photo" id="lightboxPrev">&#10094;</button>
+    <button class="lightbox-nav next" aria-label="Next photo" id="lightboxNext">&#10095;</button>
+    <div class="lightbox-counter" id="lightboxCounter"></div>
+    <img src="" alt="" id="lightboxImg">
   </div>
 
   <!-- ═══ Footer ═══ -->
   <footer class="site-footer">
-    APA NW Challenge 2026 &mdash; Trophy Case v0.1
+    APA NW Challenge 2026 &mdash; Trophy Case v0.4
   </footer>
 
   <script>
@@ -468,10 +585,18 @@
     let activeEventId = null; // currently selected event id
 
     // ── DOM refs ─────────────────────────────────────────────────────
-    const tabBar      = document.getElementById('tabBar');
-    const content     = document.getElementById('content');
-    const lightbox    = document.getElementById('lightbox');
-    const lightboxImg = document.getElementById('lightboxImg');
+    const tabBar          = document.getElementById('tabBar');
+    const content         = document.getElementById('content');
+    const lightbox        = document.getElementById('lightbox');
+    const lightboxImg     = document.getElementById('lightboxImg');
+    const lightboxCounter = document.getElementById('lightboxCounter');
+    const lightboxPrev    = document.getElementById('lightboxPrev');
+    const lightboxNext    = document.getElementById('lightboxNext');
+    const lightboxClose   = document.getElementById('lightboxClose');
+
+    // ── Lightbox gallery state ───────────────────────────────────────
+    let lightboxImages = [];  // array of image URLs currently on display
+    let lightboxIndex  = 0;   // current index into lightboxImages
 
     // ── Utility: HTML-escape ─────────────────────────────────────────
     function esc(str) {
@@ -595,10 +720,19 @@
 
       content.innerHTML = html;
 
-      // Attach bracket-view listeners
-      content.querySelectorAll('[data-bracket-photo]').forEach(btn => {
+      // Attach bracket-view listeners (opens gallery lightbox with full array)
+      content.querySelectorAll('[data-bracket-photos]').forEach(btn => {
         btn.addEventListener('click', function() {
-          openLightbox(this.dataset.bracketPhoto);
+          let paths;
+          try { paths = JSON.parse(this.dataset.bracketPhotos); } catch { paths = []; }
+          if (paths.length) openLightbox(paths, 0);
+        });
+      });
+
+      // Champion / runner-up photos also open the lightbox (single-image mode)
+      content.querySelectorAll('[data-single-photo]').forEach(el => {
+        el.addEventListener('click', function() {
+          openLightbox([this.dataset.singlePhoto], 0);
         });
       });
     }
@@ -606,84 +740,181 @@
     // ── Render a Single Winner Card ──────────────────────────────────
     function renderCard(b, sl) {
       const areaName = (b.trophy_areas && b.trophy_areas.name) ? b.trophy_areas.name : null;
+      const hasRunnerUp     = !!(b.runner_up_name || b.runner_up_photo_path);
+      const bracketPaths    = Array.isArray(b.bracket_photo_paths) ? b.bracket_photo_paths : [];
+      const bracketUrls     = bracketPaths.filter(Boolean).map(p => STORAGE_BASE + p);
 
-      // Trophy photo
-      let photoHtml;
-      if (b.trophy_photo_path) {
-        photoHtml = '<img src="' + esc(STORAGE_BASE + b.trophy_photo_path) + '" alt="Trophy photo for ' + esc(b.winner_name) + '" loading="lazy">';
+      // ── Photo grid ───────────────────────────────────────────────
+      // Two-up only when BOTH photos exist — otherwise single-up. The
+      // photo-label still marks whichever one is present.
+      const hasChampionPhoto = !!b.trophy_photo_path;
+      const hasRunnerUpPhoto = !!b.runner_up_photo_path;
+      const twoUp = hasChampionPhoto && hasRunnerUpPhoto;
+
+      function photoSlot(kind, path, personName) {
+        const url = path ? (STORAGE_BASE + path) : '';
+        const labelClass = kind === 'champion' ? 'champion' : 'runner-up';
+        const labelText  = kind === 'champion' ? 'Champion' : 'Runner-up';
+        const slotClass  = kind === 'runner-up' ? 'photo-slot runner-up-slot' : 'photo-slot';
+        if (url) {
+          return '<div class="' + slotClass + '" data-single-photo="' + esc(url) + '" style="cursor:pointer">'
+            + '<span class="photo-label ' + labelClass + '">' + labelText + '</span>'
+            + '<img src="' + esc(url) + '" alt="' + labelText + ' photo: ' + esc(personName || '') + '" loading="lazy">'
+          + '</div>';
+        }
+        return '<div class="' + slotClass + '">'
+          + '<span class="photo-label ' + labelClass + '">' + labelText + '</span>'
+          + '<span class="no-photo">\u{1F3C6}</span>'
+        + '</div>';
+      }
+
+      let photoHtml = '';
+      if (twoUp) {
+        photoHtml = '<div class="photo-grid two-up">'
+          + photoSlot('champion', b.trophy_photo_path, b.winner_name)
+          + photoSlot('runner-up', b.runner_up_photo_path, b.runner_up_name)
+        + '</div>';
+      } else if (hasChampionPhoto) {
+        photoHtml = '<div class="photo-grid">' + photoSlot('champion', b.trophy_photo_path, b.winner_name) + '</div>';
+      } else if (hasRunnerUpPhoto) {
+        photoHtml = '<div class="photo-grid">' + photoSlot('runner-up', b.runner_up_photo_path, b.runner_up_name) + '</div>';
       } else {
-        photoHtml = '<span class="no-photo">\u{1F3C6}</span>';
+        // Placeholder when neither photo exists
+        photoHtml = '<div class="photo-grid"><div class="photo-slot"><span class="no-photo">\u{1F3C6}</span></div></div>';
       }
 
-      // Players list (for team events)
-      let playersHtml = '';
-      if (b.winner_players) {
-        const names = b.winner_players.split(',').map(n => esc(n.trim())).filter(Boolean);
-        playersHtml = '<div class="player-list">' + names.join(' &bull; ') + '</div>';
+      // ── Body ─────────────────────────────────────────────────────
+      // Two-column finishers layout whenever there's a runner-up (name OR photo).
+      // Single-champion layout falls back to the previous design.
+      let bodyHtml;
+      if (hasRunnerUp) {
+        let championDetails = '';
+        if (b.winner_team) championDetails += '<div class="team-name">' + esc(b.winner_team) + '</div>';
+        if (b.winner_players) {
+          const names = b.winner_players.split(',').map(n => esc(n.trim())).filter(Boolean);
+          championDetails += '<div class="player-list">' + names.join(' &bull; ') + '</div>';
+        }
+        bodyHtml = '<div class="card-body">'
+          + '<div class="finishers">'
+            + '<div class="finisher-col">'
+              + '<div class="finisher-label">Champion</div>'
+              + '<div class="finisher-name champion">' + esc(b.winner_name) + '</div>'
+              + championDetails
+            + '</div>'
+            + '<div class="finisher-col">'
+              + '<div class="finisher-label">Runner-up</div>'
+              + '<div class="finisher-name runner-up">' + esc(b.runner_up_name || '\u2014') + '</div>'
+            + '</div>'
+          + '</div>'
+          + (areaName ? '<span class="area-badge">' + esc(areaName) + '</span>' : '')
+        + '</div>';
+      } else {
+        let playersHtml = '';
+        if (b.winner_players) {
+          const names = b.winner_players.split(',').map(n => esc(n.trim())).filter(Boolean);
+          playersHtml = '<div class="player-list">' + names.join(' &bull; ') + '</div>';
+        }
+        bodyHtml = '<div class="card-body">'
+          + '<div class="winner-name">' + esc(b.winner_name) + '</div>'
+          + (b.winner_team ? '<div class="team-name">' + esc(b.winner_team) + '</div>' : '')
+          + playersHtml
+          + (areaName ? '<span class="area-badge">' + esc(areaName) + '</span>' : '')
+        + '</div>';
       }
 
-      // Runner-up
-      let runnerHtml = '';
-      if (b.runner_up_name) {
-        runnerHtml = '<div class="runner-up">defeated ' + esc(b.runner_up_name) + '</div>';
-      }
-
-      // Area badge
-      let areaHtml = '';
-      if (areaName) {
-        areaHtml = '<span class="area-badge">' + esc(areaName) + '</span>';
-      }
-
-      // Bracket button
+      // ── View-bracket button (only when bracket photos exist) ──────
       let bracketHtml = '';
-      if (b.bracket_photo_path) {
+      if (bracketUrls.length) {
+        const countSuffix = bracketUrls.length > 1 ? ' (' + bracketUrls.length + ')' : '';
+        const label = bracketUrls.length > 1 ? 'View Brackets' : 'View Bracket';
+        // JSON-encode the array into a data attr; esc() will HTML-escape quotes.
+        const payload = esc(JSON.stringify(bracketUrls));
         bracketHtml = '<div class="card-actions">'
-          + '<button class="view-bracket-btn" data-bracket-photo="' + esc(STORAGE_BASE + b.bracket_photo_path) + '">'
+          + '<button class="view-bracket-btn" data-bracket-photos="' + payload + '">'
           + '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="14" height="14" rx="2"/><path d="M1 6h14M6 1v14"/></svg>'
-          + 'View Bracket</button></div>';
+          + label + countSuffix
+        + '</button></div>';
       }
 
       return '<article class="winner-card">'
         + '<span class="sl-badge">SL ' + esc(String(sl)) + '</span>'
-        + '<div class="trophy-photo-wrap">' + photoHtml + '</div>'
-        + '<div class="card-body">'
-          + '<div class="winner-name">' + esc(b.winner_name) + '</div>'
-          + (b.winner_team ? '<div class="team-name">' + esc(b.winner_team) + '</div>' : '')
-          + playersHtml
-          + runnerHtml
-          + areaHtml
-        + '</div>'
+        + photoHtml
+        + bodyHtml
         + bracketHtml
-        + '</article>';
+      + '</article>';
     }
 
-    // ── Lightbox ─────────────────────────────────────────────────────
-    function openLightbox(src) {
-      lightboxImg.src = src;
+    // ── Lightbox (multi-image gallery) ───────────────────────────────
+    // openLightbox takes an array of URLs and an optional start index. If
+    // only one image is supplied, nav arrows and the counter are hidden
+    // (single-image mode).
+    function openLightbox(paths, startIdx) {
+      lightboxImages = Array.isArray(paths) ? paths.filter(Boolean) : [paths].filter(Boolean);
+      if (!lightboxImages.length) return;
+      lightboxIndex = Math.max(0, Math.min(startIdx || 0, lightboxImages.length - 1));
+      updateLightbox();
       lightbox.classList.remove('hidden');
+      lightbox.classList.toggle('single-image', lightboxImages.length <= 1);
       document.body.style.overflow = 'hidden';
+    }
+
+    function updateLightbox() {
+      const src = lightboxImages[lightboxIndex];
+      lightboxImg.src = src || '';
+      lightboxImg.alt = 'Photo ' + (lightboxIndex + 1) + ' of ' + lightboxImages.length;
+      lightboxCounter.textContent = (lightboxIndex + 1) + ' / ' + lightboxImages.length;
     }
 
     function closeLightbox() {
       lightbox.classList.add('hidden');
       lightboxImg.src = '';
+      lightboxImages = [];
+      lightboxIndex = 0;
       document.body.style.overflow = '';
     }
 
-    // Close on X button click
-    lightbox.querySelector('.lightbox-close').addEventListener('click', closeLightbox);
+    function lightboxPrevImg() {
+      if (lightboxImages.length <= 1) return;
+      lightboxIndex = (lightboxIndex - 1 + lightboxImages.length) % lightboxImages.length;
+      updateLightbox();
+    }
 
-    // Close on click outside image
+    function lightboxNextImg() {
+      if (lightboxImages.length <= 1) return;
+      lightboxIndex = (lightboxIndex + 1) % lightboxImages.length;
+      updateLightbox();
+    }
+
+    // Close / nav buttons
+    lightboxClose.addEventListener('click', closeLightbox);
+    lightboxPrev.addEventListener('click', function(e) { e.stopPropagation(); lightboxPrevImg(); });
+    lightboxNext.addEventListener('click', function(e) { e.stopPropagation(); lightboxNextImg(); });
+
+    // Click outside image (or on backdrop) closes
     lightbox.addEventListener('click', function(e) {
       if (e.target === lightbox) closeLightbox();
     });
 
-    // Close on Escape key
+    // Keyboard: Escape closes, Arrow keys navigate
     document.addEventListener('keydown', function(e) {
-      if (e.key === 'Escape' && !lightbox.classList.contains('hidden')) {
-        closeLightbox();
-      }
+      if (lightbox.classList.contains('hidden')) return;
+      if (e.key === 'Escape') closeLightbox();
+      else if (e.key === 'ArrowLeft')  lightboxPrevImg();
+      else if (e.key === 'ArrowRight') lightboxNextImg();
     });
+
+    // Touch: swipe left/right to navigate (30px minimum delta)
+    let touchStartX = 0;
+    lightbox.addEventListener('touchstart', function(e) {
+      if (e.touches.length === 1) touchStartX = e.touches[0].clientX;
+    }, { passive: true });
+    lightbox.addEventListener('touchend', function(e) {
+      if (!touchStartX) return;
+      const dx = (e.changedTouches[0].clientX) - touchStartX;
+      touchStartX = 0;
+      if (Math.abs(dx) < 40) return;
+      if (dx > 0) lightboxPrevImg(); else lightboxNextImg();
+    }, { passive: true });
 
     // ── Hash Change Listener ─────────────────────────────────────────
     window.addEventListener('hashchange', function() {

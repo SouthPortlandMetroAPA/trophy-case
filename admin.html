@@ -366,6 +366,78 @@
       margin-top: 8px;
     }
 
+    /* ---- Bracket-photos gallery (admin form) ---- */
+    .bracket-photos-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .bracket-photos-list:empty { margin-bottom: 0; }
+    .bp-tile {
+      position: relative;
+      width: 120px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .bp-tile img {
+      width: 100%;
+      height: 80px;
+      object-fit: cover;
+      display: block;
+    }
+    .bp-tile .bp-badge {
+      position: absolute;
+      top: 4px; left: 4px;
+      background: rgba(0,0,0,0.7);
+      color: var(--gold);
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      line-height: 1;
+    }
+    .bp-tile .bp-badge.new { color: #95d5b2; }
+    .bp-tile .bp-remove {
+      position: absolute;
+      top: 4px; right: 4px;
+      width: 24px; height: 24px;
+      border: none;
+      border-radius: 50%;
+      background: rgba(0,0,0,0.75);
+      color: #fff;
+      font-size: 1rem;
+      line-height: 1;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .bp-tile .bp-remove:hover { background: var(--danger); }
+    .bp-tile .bp-reorder {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px;
+      background: var(--bg-light);
+      border-top: 1px solid var(--border);
+    }
+    .bp-tile .bp-reorder button {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+      width: 28px; height: 28px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      padding: 0;
+    }
+    .bp-tile .bp-reorder button:hover:not(:disabled) { border-color: var(--gold); color: var(--gold); }
+    .bp-tile .bp-reorder button:disabled { opacity: 0.3; cursor: not-allowed; }
+
     /* ---- Responsive ---- */
     @media (max-width: 600px) {
       .bracket-item { flex-direction: column; align-items: stretch; }
@@ -520,17 +592,23 @@
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label>Trophy Photo</label>
+              <label>Champion Photo <span class="hint">(1st place)</span></label>
               <label class="file-label" id="trophy-label" for="brk-trophy-file">Choose image...</label>
               <input type="file" id="brk-trophy-file" class="file-input-hidden" accept="image/*" onchange="onFileSelected(this,'trophy-label','trophy-preview')">
               <img id="trophy-preview" class="img-preview hidden">
             </div>
             <div class="form-group">
-              <label>Bracket Photo</label>
-              <label class="file-label" id="bracket-label" for="brk-bracket-file">Choose image...</label>
-              <input type="file" id="brk-bracket-file" class="file-input-hidden" accept="image/*" onchange="onFileSelected(this,'bracket-label','bracket-preview')">
-              <img id="bracket-preview" class="img-preview hidden">
+              <label>Runner-up Photo <span class="hint">(2nd place, optional)</span></label>
+              <label class="file-label" id="runnerup-label" for="brk-runnerup-file">Choose image...</label>
+              <input type="file" id="brk-runnerup-file" class="file-input-hidden" accept="image/*" onchange="onFileSelected(this,'runnerup-label','runnerup-preview')">
+              <img id="runnerup-preview" class="img-preview hidden">
             </div>
+          </div>
+          <div class="form-group">
+            <label>Bracket Photos <span class="hint">(add one or more; drag order with the arrows)</span></label>
+            <div id="bracket-photos-list" class="bracket-photos-list"></div>
+            <label class="file-label" id="bracket-add-label" for="brk-bracket-files">+ Add bracket photo(s)</label>
+            <input type="file" id="brk-bracket-files" class="file-input-hidden" accept="image/*" multiple onchange="onBracketPhotosAdded(this)">
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-primary" id="brk-submit" onclick="saveBracket()">Save Bracket</button>
@@ -549,7 +627,7 @@
     </div><!-- /admin -->
   </div><!-- /page -->
 
-  <div class="footer">Trophy Case Admin v0.1</div>
+  <div class="footer">Trophy Case Admin v0.4</div>
 
 <script>
 /* ============================================================
@@ -569,9 +647,23 @@ const SB_READ  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
 let SB_WRITE   = ''; // set from URL ?key= param
 
 /* ---------- State ---------- */
-let eventsCache  = [];   // [{id, name, slug, sort_order, active}]
-let areasCache   = [];   // [{id, name, sort_order}]
+let eventsCache   = [];  // [{id, name, slug, sort_order, active}]
+let areasCache    = [];  // [{id, name, sort_order}]
 let bracketsCache = [];  // brackets for the currently selected event
+
+/**
+ * Bracket-photos form state — the ordered list of photos the user is
+ * composing for the currently-edited (or new) bracket.
+ *
+ * Each entry is one of:
+ *   { kind: 'existing', path: 'slug/12_bracket_...jpg' }   — already uploaded
+ *   { kind: 'new',      file: File, previewUrl: 'data:...' } — picked, not yet uploaded
+ *
+ * On save, "existing" paths are kept as-is, "new" files are resized and
+ * uploaded, and any original paths no longer present in this list are
+ * deleted from Storage.
+ */
+let bracketPhotosState = [];
 
 /* ---------- Utilities ---------- */
 
@@ -688,6 +780,67 @@ function resizeImage(file) {
     reader.onerror = () => reject(new Error('Failed to read file'));
     reader.readAsDataURL(file);
   });
+}
+
+/* ---------- Bracket-photos composer ---------- */
+
+/** Render the thumbnail tiles for bracketPhotosState into #bracket-photos-list */
+function renderBracketPhotosList() {
+  const list = document.getElementById('bracket-photos-list');
+  if (!list) return;
+  list.innerHTML = bracketPhotosState.map((p, i) => {
+    const src = p.kind === 'existing' ? storageUrl(p.path) : p.previewUrl;
+    const badge = p.kind === 'new'
+      ? '<span class="bp-badge new">NEW</span>'
+      : '<span class="bp-badge">#' + (i + 1) + '</span>';
+    return (
+      '<div class="bp-tile">'
+        + '<img src="' + esc(src) + '" alt="Bracket photo ' + (i + 1) + '">'
+        + badge
+        + '<button type="button" class="bp-remove" title="Remove" onclick="removeBracketPhoto(' + i + ')">&times;</button>'
+        + '<div class="bp-reorder">'
+          + '<button type="button" title="Move left" onclick="moveBracketPhoto(' + i + ',-1)" '
+            + (i === 0 ? 'disabled' : '') + '>&larr;</button>'
+          + '<button type="button" title="Move right" onclick="moveBracketPhoto(' + i + ',1)" '
+            + (i === bracketPhotosState.length - 1 ? 'disabled' : '') + '>&rarr;</button>'
+        + '</div>'
+      + '</div>'
+    );
+  }).join('');
+}
+
+/** User picked new files via the "+ Add bracket photo(s)" input */
+function onBracketPhotosAdded(input) {
+  const files = Array.from(input.files || []);
+  if (!files.length) return;
+  let pending = files.length;
+  for (const f of files) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      bracketPhotosState.push({ kind: 'new', file: f, previewUrl: e.target.result });
+      pending--;
+      if (pending === 0) renderBracketPhotosList();
+    };
+    reader.onerror = () => { pending--; if (pending === 0) renderBracketPhotosList(); };
+    reader.readAsDataURL(f);
+  }
+  // Reset the input so the same file can be re-picked if the user removes it
+  input.value = '';
+}
+
+function removeBracketPhoto(i) {
+  if (i < 0 || i >= bracketPhotosState.length) return;
+  bracketPhotosState.splice(i, 1);
+  renderBracketPhotosList();
+}
+
+function moveBracketPhoto(i, delta) {
+  const j = i + delta;
+  if (i < 0 || j < 0 || i >= bracketPhotosState.length || j >= bracketPhotosState.length) return;
+  const tmp = bracketPhotosState[i];
+  bracketPhotosState[i] = bracketPhotosState[j];
+  bracketPhotosState[j] = tmp;
+  renderBracketPhotosList();
 }
 
 /* ---------- Tab switching ---------- */
@@ -810,10 +963,12 @@ async function deleteEvent(id, name) {
   if (!confirm('Delete event "' + name + '"? This will also delete all brackets for this event.')) return;
   try {
     // First delete all brackets for this event (and their storage files)
-    const brackets = await sb('GET', 'trophy_brackets?event_id=eq.' + id + '&select=id,trophy_photo_path,bracket_photo_path');
+    const brackets = await sb('GET', 'trophy_brackets?event_id=eq.' + id + '&select=id,trophy_photo_path,runner_up_photo_path,bracket_photo_paths');
     for (const b of (brackets || [])) {
       await deleteStorageFile(b.trophy_photo_path);
-      await deleteStorageFile(b.bracket_photo_path);
+      await deleteStorageFile(b.runner_up_photo_path);
+      const arr = Array.isArray(b.bracket_photo_paths) ? b.bracket_photo_paths : [];
+      for (const p of arr) await deleteStorageFile(p);
     }
     if (brackets && brackets.length) {
       await sb('DELETE', 'trophy_brackets?event_id=eq.' + id, null, true);
@@ -972,8 +1127,10 @@ function renderBrackets() {
   empty.classList.add('hidden');
   list.innerHTML = bracketsCache.map(b => {
     const areaName = b.trophy_areas ? b.trophy_areas.name : '';
-    const trophyUrl = storageUrl(b.trophy_photo_path);
-    const bracketUrl = storageUrl(b.bracket_photo_path);
+    const trophyUrl   = storageUrl(b.trophy_photo_path);
+    const runnerUrl   = storageUrl(b.runner_up_photo_path);
+    const bracketArr  = Array.isArray(b.bracket_photo_paths) ? b.bracket_photo_paths : [];
+    const firstBracket = bracketArr.length ? storageUrl(bracketArr[0]) : '';
     return `
       <div class="bracket-item">
         <span class="badge gold">SL ${esc(b.skill_level)}${b.skill_level_max ? '-' + esc(b.skill_level_max) : ''}</span>
@@ -985,8 +1142,10 @@ function renderBrackets() {
           ${b.winner_players ? '<br><span class="hint" style="font-size:0.8rem">' + esc(b.winner_players) + '</span>' : ''}
         </div>
         <div class="photos">
-          ${trophyUrl ? '<img class="thumb" src="' + esc(trophyUrl) + '" alt="Trophy" onclick="window.open(\'' + esc(trophyUrl) + '\',\'_blank\')" title="Trophy photo">' : ''}
-          ${bracketUrl ? '<img class="thumb" src="' + esc(bracketUrl) + '" alt="Bracket" onclick="window.open(\'' + esc(bracketUrl) + '\',\'_blank\')" title="Bracket photo">' : ''}
+          ${trophyUrl ? '<img class="thumb" src="' + esc(trophyUrl) + '" alt="Champion" onclick="window.open(\'' + esc(trophyUrl) + '\',\'_blank\')" title="Champion photo">' : ''}
+          ${runnerUrl ? '<img class="thumb" src="' + esc(runnerUrl) + '" alt="Runner-up" onclick="window.open(\'' + esc(runnerUrl) + '\',\'_blank\')" title="Runner-up photo" style="border-color:#c0c0c0">' : ''}
+          ${firstBracket ? '<img class="thumb" src="' + esc(firstBracket) + '" alt="Bracket" onclick="window.open(\'' + esc(firstBracket) + '\',\'_blank\')" title="First bracket photo">' : ''}
+          ${bracketArr.length > 1 ? '<span class="badge neutral" style="align-self:center">+' + (bracketArr.length - 1) + '</span>' : ''}
         </div>
         <div class="actions">
           <button class="btn btn-outline btn-sm" onclick="editBracket(${b.id})">Edit</button>
@@ -1001,21 +1160,25 @@ function cancelBracketEdit() {
   document.getElementById('brk-edit-id').value = '';
   document.getElementById('bracket-form-title').textContent = 'Add Bracket';
   document.getElementById('brk-sl').value = '';
+  document.getElementById('brk-sl-max').value = '';
   document.getElementById('brk-winner').value = '';
   document.getElementById('brk-team').value = '';
   document.getElementById('brk-runner').value = '';
   document.getElementById('brk-players').value = '';
   document.getElementById('brk-area').value = '';
   document.getElementById('brk-trophy-file').value = '';
-  document.getElementById('brk-bracket-file').value = '';
+  document.getElementById('brk-runnerup-file').value = '';
+  document.getElementById('brk-bracket-files').value = '';
   document.getElementById('trophy-label').textContent = 'Choose image...';
   document.getElementById('trophy-label').classList.remove('has-file');
-  document.getElementById('bracket-label').textContent = 'Choose image...';
-  document.getElementById('bracket-label').classList.remove('has-file');
+  document.getElementById('runnerup-label').textContent = 'Choose image...';
+  document.getElementById('runnerup-label').classList.remove('has-file');
   document.getElementById('trophy-preview').classList.add('hidden');
   document.getElementById('trophy-preview').src = '';
-  document.getElementById('bracket-preview').classList.add('hidden');
-  document.getElementById('bracket-preview').src = '';
+  document.getElementById('runnerup-preview').classList.add('hidden');
+  document.getElementById('runnerup-preview').src = '';
+  bracketPhotosState = [];
+  renderBracketPhotosList();
   document.getElementById('brk-cancel').style.display = 'none';
   document.getElementById('brk-submit').textContent = 'Save Bracket';
 }
@@ -1036,8 +1199,9 @@ function editBracket(id) {
   document.getElementById('brk-area').value = b.area_id || '';
   // Clear file inputs (user must re-select to replace)
   document.getElementById('brk-trophy-file').value = '';
-  document.getElementById('brk-bracket-file').value = '';
-  // Show existing photos as previews
+  document.getElementById('brk-runnerup-file').value = '';
+  document.getElementById('brk-bracket-files').value = '';
+  // Show existing champion photo
   if (b.trophy_photo_path) {
     document.getElementById('trophy-label').textContent = 'Current photo (re-select to replace)';
     document.getElementById('trophy-label').classList.add('has-file');
@@ -1048,16 +1212,21 @@ function editBracket(id) {
     document.getElementById('trophy-label').classList.remove('has-file');
     document.getElementById('trophy-preview').classList.add('hidden');
   }
-  if (b.bracket_photo_path) {
-    document.getElementById('bracket-label').textContent = 'Current photo (re-select to replace)';
-    document.getElementById('bracket-label').classList.add('has-file');
-    document.getElementById('bracket-preview').src = storageUrl(b.bracket_photo_path);
-    document.getElementById('bracket-preview').classList.remove('hidden');
+  // Show existing runner-up photo
+  if (b.runner_up_photo_path) {
+    document.getElementById('runnerup-label').textContent = 'Current photo (re-select to replace)';
+    document.getElementById('runnerup-label').classList.add('has-file');
+    document.getElementById('runnerup-preview').src = storageUrl(b.runner_up_photo_path);
+    document.getElementById('runnerup-preview').classList.remove('hidden');
   } else {
-    document.getElementById('bracket-label').textContent = 'Choose image...';
-    document.getElementById('bracket-label').classList.remove('has-file');
-    document.getElementById('bracket-preview').classList.add('hidden');
+    document.getElementById('runnerup-label').textContent = 'Choose image...';
+    document.getElementById('runnerup-label').classList.remove('has-file');
+    document.getElementById('runnerup-preview').classList.add('hidden');
   }
+  // Seed the bracket-photos composer with existing paths
+  const existingBracketPaths = Array.isArray(b.bracket_photo_paths) ? b.bracket_photo_paths : [];
+  bracketPhotosState = existingBracketPaths.map(p => ({ kind: 'existing', path: p }));
+  renderBracketPhotosList();
   document.getElementById('brk-cancel').style.display = '';
   document.getElementById('brk-submit').textContent = 'Update Bracket';
   // Scroll to form
@@ -1068,15 +1237,16 @@ function editBracket(id) {
 async function saveBracket() {
   const eventId = document.getElementById('brk-event').value;
   if (!eventId) return showStatus('Select an event first.', 'err');
-  const editId     = document.getElementById('brk-edit-id').value;
-  const sl         = parseInt(document.getElementById('brk-sl').value, 10);
-  const winnerName = document.getElementById('brk-winner').value.trim();
-  const team       = document.getElementById('brk-team').value.trim() || null;
-  const runner     = document.getElementById('brk-runner').value.trim() || null;
-  const players    = document.getElementById('brk-players').value.trim() || null;
-  const areaId     = document.getElementById('brk-area').value || null;
-  const trophyFile = document.getElementById('brk-trophy-file').files[0];
-  const bracketFile = document.getElementById('brk-bracket-file').files[0];
+  const editId       = document.getElementById('brk-edit-id').value;
+  const sl           = parseInt(document.getElementById('brk-sl').value, 10);
+  const slMax        = parseInt(document.getElementById('brk-sl-max').value, 10) || null;
+  const winnerName   = document.getElementById('brk-winner').value.trim();
+  const team         = document.getElementById('brk-team').value.trim() || null;
+  const runner       = document.getElementById('brk-runner').value.trim() || null;
+  const players      = document.getElementById('brk-players').value.trim() || null;
+  const areaId       = document.getElementById('brk-area').value || null;
+  const trophyFile   = document.getElementById('brk-trophy-file').files[0];
+  const runnerupFile = document.getElementById('brk-runnerup-file').files[0];
 
   if (!sl || !winnerName) return showStatus('Skill level and winner name are required.', 'err');
 
@@ -1087,25 +1257,25 @@ async function saveBracket() {
   btn.innerHTML = '<span class="spinner"></span> Saving...';
 
   try {
-    let trophyPath  = null;
-    let bracketPath = null;
+    // Carry-forward state from the existing row (if editing)
+    let trophyPath   = null;
+    let runnerUpPath = null;
+    let originalBracketPaths = [];
 
-    // If editing, carry forward existing paths (unless replaced)
     if (editId) {
       const existing = bracketsCache.find(x => x.id === parseInt(editId, 10));
       if (existing) {
-        trophyPath  = existing.trophy_photo_path;
-        bracketPath = existing.bracket_photo_path;
+        trophyPath   = existing.trophy_photo_path;
+        runnerUpPath = existing.runner_up_photo_path;
+        originalBracketPaths = Array.isArray(existing.bracket_photo_paths)
+          ? existing.bracket_photo_paths.slice()
+          : [];
       }
     }
 
-    // Determine the bracket ID for storage path naming
-    // For new brackets, we create the DB row first, then upload, then update paths
+    // For new brackets, insert the row first so we have an ID for path naming
     let bracketId = editId;
-
     if (!editId) {
-      // CREATE: insert the row first to get the ID
-      var slMax = parseInt(document.getElementById('brk-sl-max').value, 10) || null;
       const row = {
         event_id: parseInt(eventId, 10),
         skill_level: sl,
@@ -1116,37 +1286,60 @@ async function saveBracket() {
         runner_up_name: runner,
         area_id: areaId ? parseInt(areaId, 10) : null,
         trophy_photo_path: null,
-        bracket_photo_path: null
+        runner_up_photo_path: null,
+        bracket_photo_paths: []
       };
       const created = await sb('POST', 'trophy_brackets', row, true);
       bracketId = created[0].id;
     }
 
-    // Upload images if provided
+    // Champion photo
     if (trophyFile) {
       const resized = await resizeImage(trophyFile);
-      // Delete old photo if replacing
       if (editId && trophyPath) await deleteStorageFile(trophyPath);
       trophyPath = await uploadImage(resized, slug, bracketId, 'trophy');
     }
-    if (bracketFile) {
-      const resized = await resizeImage(bracketFile);
-      if (editId && bracketPath) await deleteStorageFile(bracketPath);
-      bracketPath = await uploadImage(resized, slug, bracketId, 'bracket');
+
+    // Runner-up photo
+    if (runnerupFile) {
+      const resized = await resizeImage(runnerupFile);
+      if (editId && runnerUpPath) await deleteStorageFile(runnerUpPath);
+      runnerUpPath = await uploadImage(resized, slug, bracketId, 'runnerup');
     }
 
-    // UPDATE the row with photo paths (and other fields if editing)
-    var slMaxUpdate = parseInt(document.getElementById('brk-sl-max').value, 10) || null;
+    // Bracket photos — iterate the composer state in order, uploading new files
+    // and keeping existing paths. Build the final array in the user-chosen order.
+    const finalBracketPaths = [];
+    for (let i = 0; i < bracketPhotosState.length; i++) {
+      const entry = bracketPhotosState[i];
+      if (entry.kind === 'existing') {
+        finalBracketPaths.push(entry.path);
+      } else {
+        // New file — resize and upload. Include index to avoid same-ms collision.
+        const resized = await resizeImage(entry.file);
+        const path = await uploadImage(resized, slug, bracketId, 'bracket' + (i + 1));
+        finalBracketPaths.push(path);
+      }
+    }
+
+    // Delete storage files for any original paths the user removed
+    const removedPaths = originalBracketPaths.filter(p => !finalBracketPaths.includes(p));
+    for (const p of removedPaths) {
+      await deleteStorageFile(p);
+    }
+
+    // Persist the row
     const update = {
       skill_level: sl,
-      skill_level_max: slMaxUpdate,
+      skill_level_max: slMax,
       winner_name: winnerName,
       winner_team: team,
       winner_players: players,
       runner_up_name: runner,
       area_id: areaId ? parseInt(areaId, 10) : null,
       trophy_photo_path: trophyPath,
-      bracket_photo_path: bracketPath,
+      runner_up_photo_path: runnerUpPath,
+      bracket_photo_paths: finalBracketPaths,
       updated_at: new Date().toISOString()
     };
     await sb('PATCH', 'trophy_brackets?id=eq.' + bracketId, update, true);
@@ -1167,9 +1360,11 @@ async function deleteBracket(id) {
   if (!b) return;
   if (!confirm('Delete bracket SL ' + b.skill_level + ' — ' + b.winner_name + '?')) return;
   try {
-    // Delete storage files
+    // Delete all storage files for this bracket
     await deleteStorageFile(b.trophy_photo_path);
-    await deleteStorageFile(b.bracket_photo_path);
+    await deleteStorageFile(b.runner_up_photo_path);
+    const arr = Array.isArray(b.bracket_photo_paths) ? b.bracket_photo_paths : [];
+    for (const p of arr) await deleteStorageFile(p);
     // Delete row
     await sb('DELETE', 'trophy_brackets?id=eq.' + id, null, true);
     showStatus('Bracket deleted.', 'ok');
