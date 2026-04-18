@@ -599,11 +599,19 @@
             <label for="brk-runner-players" id="brk-runner-players-label">Runner-up Players <span class="hint">(optional, comma-separated)</span></label>
             <textarea id="brk-runner-players" placeholder="Player 1, Player 2"></textarea>
           </div>
-          <div class="form-group">
-            <label for="brk-area">League Area <span class="hint">(optional)</span></label>
-            <select id="brk-area">
-              <option value="">-- None --</option>
-            </select>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="brk-area">1st Place League Area <span class="hint">(optional)</span></label>
+              <select id="brk-area">
+                <option value="">-- None --</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="brk-runner-area">2nd Place League Area <span class="hint">(optional)</span></label>
+              <select id="brk-runner-area">
+                <option value="">-- None --</option>
+              </select>
+            </div>
           </div>
           <div class="form-row">
             <div class="form-group">
@@ -642,7 +650,7 @@
     </div><!-- /admin -->
   </div><!-- /page -->
 
-  <div class="footer">Trophy Case Admin v0.6</div>
+  <div class="footer">Trophy Case Admin v0.7</div>
 
 <script>
 /* ============================================================
@@ -1245,12 +1253,16 @@ function populateBracketEventDropdown() {
     eventsCache.map(ev => `<option value="${ev.id}" ${String(ev.id) === current ? 'selected' : ''}>${esc(ev.name)}</option>`).join('');
 }
 
-/** Populate the area dropdown in the bracket form */
+/** Populate the 1st + 2nd place area dropdowns in the bracket form */
 function populateBracketAreaDropdown() {
-  const sel = document.getElementById('brk-area');
-  const current = sel.value;
-  sel.innerHTML = '<option value="">-- None --</option>' +
-    areasCache.map(a => `<option value="${a.id}" ${String(a.id) === current ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
+  const ids = ['brk-area', 'brk-runner-area'];
+  ids.forEach(id => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = '<option value="">-- None --</option>' +
+      areasCache.map(a => `<option value="${a.id}" ${String(a.id) === current ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
+  });
 }
 
 /** Called when the user picks an event in the Brackets tab */
@@ -1348,6 +1360,9 @@ function renderBrackets() {
   empty.classList.add('hidden');
   list.innerHTML = bracketsCache.map(b => {
     const areaName = b.trophy_areas ? b.trophy_areas.name : '';
+    const runnerAreaName = b.runner_up_area_id
+      ? ((areasCache.find(a => a.id === b.runner_up_area_id) || {}).name || '')
+      : '';
     const trophyUrl   = storageUrl(b.trophy_photo_path);
     const runnerUrl   = storageUrl(b.runner_up_photo_path);
     const bracketArr  = Array.isArray(b.bracket_photo_paths) ? b.bracket_photo_paths : [];
@@ -1363,7 +1378,8 @@ function renderBrackets() {
           <strong>${esc(b.winner_name)}</strong>
           ${b.winner_team ? ' <span class="hint">(' + esc(b.winner_team) + ')</span>' : ''}
           ${b.runner_up_name ? '<br><span class="hint">vs ' + esc(b.runner_up_name) + '</span>' : ''}
-          ${areaName ? '<br><span class="badge neutral">' + esc(areaName) + '</span>' : ''}
+          ${areaName ? '<br>1st: <span class="badge neutral">' + esc(areaName) + '</span>' : ''}
+          ${runnerAreaName ? ' &nbsp;2nd: <span class="badge neutral">' + esc(runnerAreaName) + '</span>' : ''}
           ${b.winner_players ? '<br><span class="hint" style="font-size:0.8rem">Winners: ' + esc(b.winner_players) + '</span>' : ''}
           ${b.runner_up_players ? '<br><span class="hint" style="font-size:0.8rem">Runner-up: ' + esc(b.runner_up_players) + '</span>' : ''}
         </div>
@@ -1393,6 +1409,7 @@ function cancelBracketEdit() {
   document.getElementById('brk-players').value = '';
   document.getElementById('brk-runner-players').value = '';
   document.getElementById('brk-area').value = '';
+  document.getElementById('brk-runner-area').value = '';
   const trophyInputC   = document.getElementById('brk-trophy-file');
   const runnerupInputC = document.getElementById('brk-runnerup-file');
   const bracketInputC  = document.getElementById('brk-bracket-files');
@@ -1437,6 +1454,7 @@ function editBracket(id) {
   document.getElementById('brk-players').value = b.winner_players || '';
   document.getElementById('brk-runner-players').value = b.runner_up_players || '';
   document.getElementById('brk-area').value = b.area_id || '';
+  document.getElementById('brk-runner-area').value = b.runner_up_area_id || '';
   // Clear file inputs (user must re-select to replace)
   const editTrophy   = document.getElementById('brk-trophy-file');
   const editRunnerup = document.getElementById('brk-runnerup-file');
@@ -1496,6 +1514,7 @@ async function saveBracket() {
   const players       = document.getElementById('brk-players').value.trim() || null;
   const runnerPlayers = document.getElementById('brk-runner-players').value.trim() || null;
   const areaId        = document.getElementById('brk-area').value || null;
+  const runnerAreaId  = document.getElementById('brk-runner-area').value || null;
   const trophyFile    = document.getElementById('brk-trophy-file').files[0];
   const runnerupFile  = document.getElementById('brk-runnerup-file').files[0];
 
@@ -1541,6 +1560,7 @@ async function saveBracket() {
         runner_up_name: runner,
         runner_up_players: runnerPlayers,
         area_id: areaId ? parseInt(areaId, 10) : null,
+        runner_up_area_id: runnerAreaId ? parseInt(runnerAreaId, 10) : null,
         trophy_photo_path: null,
         runner_up_photo_path: null,
         bracket_photo_paths: []
@@ -1596,6 +1616,7 @@ async function saveBracket() {
       runner_up_name: runner,
       runner_up_players: runnerPlayers,
       area_id: areaId ? parseInt(areaId, 10) : null,
+      runner_up_area_id: runnerAreaId ? parseInt(runnerAreaId, 10) : null,
       trophy_photo_path: trophyPath,
       runner_up_photo_path: runnerUpPath,
       bracket_photo_paths: finalBracketPaths,

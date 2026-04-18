@@ -258,100 +258,68 @@
       line-height: 1;
     }
 
-    /* Photo grid — 1-up by default, 2-up when both champion + runner-up photos exist */
-    .photo-grid {
-      display: grid;
-      grid-template-columns: 1fr;
-      background: #0a0a16;
+    /* Finisher sections (stacked). Used for both single-champion and
+       1st+2nd layouts. When both are present, each gets its own heading
+       (1st Place / 2nd Place) and its own gold / silver accent. No
+       overlay labels on photos — headings are text outside the image. */
+    .finisher-section {
+      background: var(--bg-card);
+      position: relative;
     }
-    .photo-grid.two-up {
-      grid-template-columns: 1fr 1fr;
-      gap: 2px;
+    .finisher-section + .finisher-section {
+      border-top: 1px solid var(--border);
     }
 
-    .photo-slot {
-      position: relative;
-      background: #0a0a16;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 120px;
+    .finisher-section-heading {
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      padding: 14px 20px 6px;
+      line-height: 1.2;
     }
-    .photo-slot img {
+    .finisher-section.first  .finisher-section-heading { color: var(--gold); }
+    .finisher-section.second .finisher-section-heading { color: var(--silver-muted); }
+
+    .finisher-photo {
+      width: 100%;
+      background: #0a0a16;
+      border-bottom: 2px solid var(--gold);
+      position: relative;
+      overflow: hidden;
+    }
+    .finisher-photo.second { border-bottom-color: var(--silver); }
+    .finisher-photo[data-single-photo] { cursor: pointer; }
+    .finisher-photo img {
       width: 100%;
       height: auto;
       display: block;
-      border-bottom: 2px solid var(--gold);
     }
-    .photo-slot.runner-up-slot img {
-      border-bottom-color: var(--silver);
+    .finisher-photo.no-photo-bg {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 140px;
     }
-    .photo-slot .no-photo {
+    .finisher-photo .no-photo {
       color: var(--text-muted);
       font-size: 3rem;
-      padding: 32px 0;
-    }
-    .photo-label {
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      font-size: 0.68rem;
-      font-weight: 800;
-      letter-spacing: 0.1em;
-      padding: 4px 10px;
-      border-radius: 4px;
-      text-transform: uppercase;
-      line-height: 1;
-      z-index: 2;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
-    }
-    .photo-label.champion { background: var(--gold); color: #0f0f1a; }
-    .photo-label.runner-up { background: var(--silver); color: #0f0f1a; }
-
-    /* Card body */
-    .card-body {
-      padding: 20px;
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
     }
 
-    /* Two-column finisher layout (champion | runner-up) — used whenever a runner-up is present */
-    .finishers {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-    }
-    .finisher-col {
+    .finisher-details {
+      padding: 12px 20px 18px;
       display: flex;
       flex-direction: column;
-      gap: 4px;
-      min-width: 0;
+      gap: 6px;
     }
-    .finisher-label {
-      font-size: 0.68rem;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--text-muted);
-    }
-    .finisher-name {
-      font-size: clamp(1rem, 0.9rem + 0.4vw, 1.25rem);
+    .finisher-details .name {
+      font-size: clamp(1.1rem, 1rem + 0.4vw, 1.35rem);
       font-weight: 700;
       line-height: 1.25;
       word-break: break-word;
     }
-    .finisher-name.champion { color: var(--gold); }
-    .finisher-name.runner-up { color: var(--silver-muted); }
-
-    /* Single-champion layout fallback (no runner-up) */
-    .winner-name {
-      font-size: clamp(1.125rem, 1rem + 0.5vw, 1.375rem);
-      font-weight: 700;
-      color: var(--gold);
-      line-height: 1.3;
-    }
+    .finisher-section.first  .finisher-details .name { color: var(--gold); }
+    .finisher-section.second .finisher-details .name { color: var(--silver-muted); }
 
     .team-name {
       font-size: 0.9375rem;
@@ -363,6 +331,11 @@
       font-size: 0.8125rem;
       color: var(--text-muted);
       line-height: 1.4;
+    }
+
+    .finisher-section.second .area-badge {
+      border-color: var(--silver);
+      color: var(--silver);
     }
 
     /* Area badge */
@@ -574,7 +547,7 @@
 
   <!-- ═══ Footer ═══ -->
   <footer class="site-footer">
-    APA NW Challenge 2026 &mdash; Trophy Case v0.6
+    APA NW Challenge 2026 &mdash; Trophy Case v0.7
   </footer>
 
   <script>
@@ -591,8 +564,9 @@
     const STORAGE_BASE = SUPABASE_URL + '/storage/v1/object/public/trophy-case-photos/';
 
     // ── State ────────────────────────────────────────────────────────
-    let events = [];          // trophy_events rows
-    let activeEventId = null; // currently selected event id
+    let events = [];                 // trophy_events rows
+    let activeEventId = null;        // currently selected event id
+    let areasById = new Map();       // id → area name, populated once at init
 
     // ── DOM refs ─────────────────────────────────────────────────────
     const tabBar          = document.getElementById('tabBar');
@@ -608,12 +582,27 @@
     let lightboxImages = [];  // array of image URLs currently on display
     let lightboxIndex  = 0;   // current index into lightboxImages
 
-    // ── Utility: HTML-escape ─────────────────────────────────────────
+    // ── Utility: HTML-escape (text content only; doesn't escape quotes) ──
     function esc(str) {
       if (str == null) return '';
       const el = document.createElement('span');
       el.textContent = String(str);
       return el.innerHTML;
+    }
+
+    // ── Utility: HTML attribute value escape ─────────────────────────
+    // esc() only escapes &<>; it does NOT escape quotes, so values that
+    // contain " or ' (e.g. JSON.stringify output) would prematurely close
+    // a double-quoted attribute. Use this when interpolating into
+    // attr="..." contexts.
+    function escAttr(str) {
+      if (str == null) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
     }
 
     // ── Supabase REST helper ─────────────────────────────────────────
@@ -628,10 +617,17 @@
       return resp.json();
     }
 
-    // ── Fetch Events & Render Tabs ───────────────────────────────────
+    // ── Fetch Events + Areas & Render Tabs ───────────────────────────
+    // Areas are fetched once at init and cached by id so cards can show
+    // per-finisher area badges without a PostgREST double-embed dance.
     async function loadEvents() {
       try {
-        events = await supaGet('trophy_events?active=eq.true&select=id,name,slug,has_skill_levels&order=sort_order.asc');
+        const [evRows, areaRows] = await Promise.all([
+          supaGet('trophy_events?active=eq.true&select=id,name,slug,has_skill_levels&order=sort_order.asc'),
+          supaGet('trophy_areas?select=id,name')
+        ]);
+        events = evRows;
+        areasById = new Map((areaRows || []).map(a => [a.id, a.name]));
       } catch (err) {
         content.innerHTML = '<div class="empty-state">Failed to load events. Please try again later.</div>';
         console.error('loadEvents error:', err);
@@ -691,7 +687,7 @@
       let brackets;
       try {
         brackets = await supaGet(
-          'trophy_brackets?select=*,trophy_areas(name)'
+          'trophy_brackets?select=*'
           + '&event_id=eq.' + eventId
           + '&order=skill_level.asc.nullslast,id.asc'
         );
@@ -760,103 +756,104 @@
     }
 
     // ── Render a Single Winner Card ──────────────────────────────────
+    // Stacked layout: each finisher (1st, 2nd) is its own section with
+    // its own heading, photo, details, and league-area badge. Single-
+    // champion events get a single "1st Place" section with no heading
+    // (to stay clean).
     function renderCard(b, sl) {
-      const areaName = (b.trophy_areas && b.trophy_areas.name) ? b.trophy_areas.name : null;
       const hasRunnerUp     = !!(b.runner_up_name || b.runner_up_photo_path);
       const bracketPaths    = Array.isArray(b.bracket_photo_paths) ? b.bracket_photo_paths : [];
       const bracketUrls     = bracketPaths.filter(Boolean).map(p => STORAGE_BASE + p);
 
-      // ── Photo grid ───────────────────────────────────────────────
-      // Two-up only when BOTH photos exist — otherwise single-up. The
-      // photo-label still marks whichever one is present.
-      const hasChampionPhoto = !!b.trophy_photo_path;
-      const hasRunnerUpPhoto = !!b.runner_up_photo_path;
-      const twoUp = hasChampionPhoto && hasRunnerUpPhoto;
+      const firstAreaName  = b.area_id           ? (areasById.get(b.area_id)           || null) : null;
+      const secondAreaName = b.runner_up_area_id ? (areasById.get(b.runner_up_area_id) || null) : null;
 
-      function photoSlot(kind, path, personName) {
-        const url = path ? (STORAGE_BASE + path) : '';
-        const labelClass = kind === 'champion' ? 'champion' : 'runner-up';
-        const labelText  = kind === 'champion' ? 'Champion' : 'Runner-up';
-        const slotClass  = kind === 'runner-up' ? 'photo-slot runner-up-slot' : 'photo-slot';
-        if (url) {
-          return '<div class="' + slotClass + '" data-single-photo="' + esc(url) + '" style="cursor:pointer">'
-            + '<span class="photo-label ' + labelClass + '">' + labelText + '</span>'
-            + '<img src="' + esc(url) + '" alt="' + labelText + ' photo: ' + esc(personName || '') + '" loading="lazy">'
-          + '</div>';
+      /**
+       * Build one finisher section (1st or 2nd place). kind is 'first' or
+       * 'second'. Photo is optional; when absent we show a trophy
+       * placeholder background. Heading is omitted when includeHeading
+       * is false (used for the single-champion fallback).
+       */
+      function finisherSection(opts) {
+        const { kind, personName, photoPath, teamLabel, players, areaLabel, includeHeading } = opts;
+        const headingText = kind === 'first' ? '1st Place' : '2nd Place';
+        const heading = includeHeading
+          ? '<div class="finisher-section-heading">' + headingText + '</div>'
+          : '';
+
+        // Photo block
+        let photoHtml;
+        if (photoPath) {
+          const url = STORAGE_BASE + photoPath;
+          photoHtml = '<div class="finisher-photo ' + kind + '" data-single-photo="' + escAttr(url) + '">'
+            + '<img src="' + escAttr(url) + '" alt="' + esc(headingText + (personName ? ': ' + personName : '')) + '" loading="lazy">'
+            + '</div>';
+        } else {
+          photoHtml = '<div class="finisher-photo ' + kind + ' no-photo-bg">'
+            + '<span class="no-photo">\u{1F3C6}</span>'
+            + '</div>';
         }
-        return '<div class="' + slotClass + '">'
-          + '<span class="photo-label ' + labelClass + '">' + labelText + '</span>'
-          + '<span class="no-photo">\u{1F3C6}</span>'
-        + '</div>';
+
+        // Details block
+        let detailsHtml = '<div class="finisher-details">';
+        if (personName) detailsHtml += '<div class="name">' + esc(personName) + '</div>';
+        if (teamLabel)  detailsHtml += '<div class="team-name">' + esc(teamLabel) + '</div>';
+        if (players) {
+          const names = players.split(',').map(n => esc(n.trim())).filter(Boolean);
+          if (names.length) detailsHtml += '<div class="player-list">' + names.join(' &bull; ') + '</div>';
+        }
+        if (areaLabel)  detailsHtml += '<span class="area-badge">' + esc(areaLabel) + '</span>';
+        detailsHtml += '</div>';
+
+        return '<section class="finisher-section ' + kind + '">'
+          + heading
+          + photoHtml
+          + detailsHtml
+          + '</section>';
       }
 
-      let photoHtml = '';
-      if (twoUp) {
-        photoHtml = '<div class="photo-grid two-up">'
-          + photoSlot('champion', b.trophy_photo_path, b.winner_name)
-          + photoSlot('runner-up', b.runner_up_photo_path, b.runner_up_name)
-        + '</div>';
-      } else if (hasChampionPhoto) {
-        photoHtml = '<div class="photo-grid">' + photoSlot('champion', b.trophy_photo_path, b.winner_name) + '</div>';
-      } else if (hasRunnerUpPhoto) {
-        photoHtml = '<div class="photo-grid">' + photoSlot('runner-up', b.runner_up_photo_path, b.runner_up_name) + '</div>';
-      } else {
-        // Placeholder when neither photo exists
-        photoHtml = '<div class="photo-grid"><div class="photo-slot"><span class="no-photo">\u{1F3C6}</span></div></div>';
-      }
-
-      // ── Body ─────────────────────────────────────────────────────
-      // Two-column finishers layout whenever there's a runner-up (name OR photo).
-      // Single-champion layout falls back to the previous design.
       let bodyHtml;
       if (hasRunnerUp) {
-        let championDetails = '';
-        if (b.winner_team) championDetails += '<div class="team-name">' + esc(b.winner_team) + '</div>';
-        if (b.winner_players) {
-          const names = b.winner_players.split(',').map(n => esc(n.trim())).filter(Boolean);
-          championDetails += '<div class="player-list">' + names.join(' &bull; ') + '</div>';
-        }
-        let runnerUpDetails = '';
-        if (b.runner_up_players) {
-          const rnames = b.runner_up_players.split(',').map(n => esc(n.trim())).filter(Boolean);
-          runnerUpDetails = '<div class="player-list">' + rnames.join(' &bull; ') + '</div>';
-        }
-        bodyHtml = '<div class="card-body">'
-          + '<div class="finishers">'
-            + '<div class="finisher-col">'
-              + '<div class="finisher-label">Champion</div>'
-              + '<div class="finisher-name champion">' + esc(b.winner_name) + '</div>'
-              + championDetails
-            + '</div>'
-            + '<div class="finisher-col">'
-              + '<div class="finisher-label">Runner-up</div>'
-              + '<div class="finisher-name runner-up">' + esc(b.runner_up_name || '\u2014') + '</div>'
-              + runnerUpDetails
-            + '</div>'
-          + '</div>'
-          + (areaName ? '<span class="area-badge">' + esc(areaName) + '</span>' : '')
-        + '</div>';
+        bodyHtml =
+          finisherSection({
+            kind: 'first',
+            personName: b.winner_name,
+            photoPath: b.trophy_photo_path,
+            teamLabel: b.winner_team,
+            players: b.winner_players,
+            areaLabel: firstAreaName,
+            includeHeading: true
+          })
+          + finisherSection({
+            kind: 'second',
+            personName: b.runner_up_name,
+            photoPath: b.runner_up_photo_path,
+            teamLabel: null,
+            players: b.runner_up_players,
+            areaLabel: secondAreaName,
+            includeHeading: true
+          });
       } else {
-        let playersHtml = '';
-        if (b.winner_players) {
-          const names = b.winner_players.split(',').map(n => esc(n.trim())).filter(Boolean);
-          playersHtml = '<div class="player-list">' + names.join(' &bull; ') + '</div>';
-        }
-        bodyHtml = '<div class="card-body">'
-          + '<div class="winner-name">' + esc(b.winner_name) + '</div>'
-          + (b.winner_team ? '<div class="team-name">' + esc(b.winner_team) + '</div>' : '')
-          + playersHtml
-          + (areaName ? '<span class="area-badge">' + esc(areaName) + '</span>' : '')
-        + '</div>';
+        // Single champion — clean layout, no heading text so the card
+        // stays uncluttered (there's nothing to contrast against).
+        bodyHtml = finisherSection({
+          kind: 'first',
+          personName: b.winner_name,
+          photoPath: b.trophy_photo_path,
+          teamLabel: b.winner_team,
+          players: b.winner_players,
+          areaLabel: firstAreaName,
+          includeHeading: false
+        });
       }
 
-      // ── View-bracket button (only when bracket photos exist) ──────
+      // ── View-bracket(s) button — proper attribute escape for the JSON
+      // payload so embedded quotes don't close the attribute early. ──
       let bracketHtml = '';
       if (bracketUrls.length) {
         const countSuffix = bracketUrls.length > 1 ? ' (' + bracketUrls.length + ')' : '';
         const label = bracketUrls.length > 1 ? 'View Brackets' : 'View Bracket';
-        // JSON-encode the array into a data attr; esc() will HTML-escape quotes.
-        const payload = esc(JSON.stringify(bracketUrls));
+        const payload = escAttr(JSON.stringify(bracketUrls));
         bracketHtml = '<div class="card-actions">'
           + '<button class="view-bracket-btn" data-bracket-photos="' + payload + '">'
           + '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="14" height="14" rx="2"/><path d="M1 6h14M6 1v14"/></svg>'
@@ -864,16 +861,13 @@
         + '</button></div>';
       }
 
-      // SL badge only for events that use skill levels. For no-SL events
-      // (sl === null, e.g. Scotch Doubles) we omit the badge entirely so
-      // the card composition stays clean.
+      // SL badge only for events that use skill levels.
       const slBadgeHtml = (sl != null && sl !== '')
         ? '<span class="sl-badge">SL ' + esc(String(sl)) + '</span>'
         : '';
 
       return '<article class="winner-card">'
         + slBadgeHtml
-        + photoHtml
         + bodyHtml
         + bracketHtml
       + '</article>';
