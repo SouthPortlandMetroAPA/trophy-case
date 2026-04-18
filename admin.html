@@ -608,22 +608,22 @@
           <div class="form-row">
             <div class="form-group">
               <label id="brk-trophy-photo-label">Champion Photo <span class="hint">(1st place)</span></label>
-              <label class="file-label" id="trophy-label" for="brk-trophy-file">Choose image...</label>
-              <input type="file" id="brk-trophy-file" class="file-input-hidden" accept="image/*" onchange="onFileSelected(this,'trophy-label','trophy-preview')">
+              <label class="file-label" id="trophy-label" for="brk-trophy-file">Choose image or PDF...</label>
+              <input type="file" id="brk-trophy-file" class="file-input-hidden" accept="image/*,application/pdf" onchange="onFileSelected(this,'trophy-label','trophy-preview')">
               <img id="trophy-preview" class="img-preview hidden">
             </div>
             <div class="form-group">
               <label id="brk-runnerup-photo-label">Runner-up Photo <span class="hint">(2nd place, optional)</span></label>
-              <label class="file-label" id="runnerup-label" for="brk-runnerup-file">Choose image...</label>
-              <input type="file" id="brk-runnerup-file" class="file-input-hidden" accept="image/*" onchange="onFileSelected(this,'runnerup-label','runnerup-preview')">
+              <label class="file-label" id="runnerup-label" for="brk-runnerup-file">Choose image or PDF...</label>
+              <input type="file" id="brk-runnerup-file" class="file-input-hidden" accept="image/*,application/pdf" onchange="onFileSelected(this,'runnerup-label','runnerup-preview')">
               <img id="runnerup-preview" class="img-preview hidden">
             </div>
           </div>
           <div class="form-group">
             <label>Bracket Photos <span class="hint">(add one or more; drag order with the arrows)</span></label>
             <div id="bracket-photos-list" class="bracket-photos-list"></div>
-            <label class="file-label" id="bracket-add-label" for="brk-bracket-files">+ Add bracket photo(s)</label>
-            <input type="file" id="brk-bracket-files" class="file-input-hidden" accept="image/*" multiple onchange="onBracketPhotosAdded(this)">
+            <label class="file-label" id="bracket-add-label" for="brk-bracket-files">+ Add bracket photo(s) or PDF</label>
+            <input type="file" id="brk-bracket-files" class="file-input-hidden" accept="image/*,application/pdf" multiple onchange="onBracketPhotosAdded(this)">
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-primary" id="brk-submit" onclick="saveBracket()">Save Bracket</button>
@@ -642,7 +642,7 @@
     </div><!-- /admin -->
   </div><!-- /page -->
 
-  <div class="footer">Trophy Case Admin v0.5</div>
+  <div class="footer">Trophy Case Admin v0.6</div>
 
 <script>
 /* ============================================================
@@ -764,6 +764,80 @@ function storageUrl(path) {
   return SB_URL + '/storage/v1/object/public/trophy-case-photos/' + path;
 }
 
+/* ================================================================
+ *  PDF SUPPORT — admin uploads PDFs, we render each page to a
+ *  high-resolution JPEG client-side (via pdf.js, loaded lazily from
+ *  jsdelivr only when a PDF is actually picked) and upload those
+ *  JPEGs as normal bracket/trophy/runner-up photos. No schema or
+ *  storage changes — bucket stays image-only. Public site renders
+ *  rasterized pages; the existing lightbox pinch-zoom covers
+ *  "read the small print" needs.
+ * ================================================================ */
+
+const PDFJS_VERSION = '4.8.69';
+const PDFJS_URL     = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@' + PDFJS_VERSION + '/build/pdf.min.mjs';
+const PDFJS_WORKER  = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@' + PDFJS_VERSION + '/build/pdf.worker.min.mjs';
+
+let _pdfJsPromise = null;
+/** Load pdf.js on demand and cache the module. */
+function ensurePdfJs() {
+  if (!_pdfJsPromise) {
+    _pdfJsPromise = import(PDFJS_URL).then(mod => {
+      mod.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+      return mod;
+    });
+  }
+  return _pdfJsPromise;
+}
+
+/** True when the file looks like a PDF (by MIME or extension). */
+function isPdf(file) {
+  return !!file && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name || ''));
+}
+
+/** Read any Blob/File into a data: URL (used for previews). */
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = e => resolve(e.target.result);
+    r.onerror = () => reject(new Error('Failed to read file'));
+    r.readAsDataURL(blob);
+  });
+}
+
+/**
+ * Render every page of a PDF File/Blob to a JPEG Blob.
+ * Default target width 2400px @ 0.9 quality — crisp enough to read
+ * bracket text on a phone pinch-zoom without bloating storage.
+ * Returns Promise<Blob[]>  (one per page, in order).
+ */
+async function pdfToJpegPages(file, opts) {
+  const maxWidth = (opts && opts.maxWidth) || 2400;
+  const quality  = (opts && opts.quality)  || 0.9;
+  const pdfjsLib = await ensurePdfJs();
+  const buf      = await file.arrayBuffer();
+  const pdf      = await pdfjsLib.getDocument({ data: buf }).promise;
+  const blobs    = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page      = await pdf.getPage(i);
+    const vp1       = page.getViewport({ scale: 1 });
+    const scale     = maxWidth / vp1.width;
+    const viewport  = page.getViewport({ scale });
+    const canvas    = document.createElement('canvas');
+    canvas.width    = Math.ceil(viewport.width);
+    canvas.height   = Math.ceil(viewport.height);
+    const ctx       = canvas.getContext('2d');
+    // PDFs can have transparency; bracket sheets should render on white.
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', quality));
+    if (!blob) throw new Error('Canvas toBlob failed on page ' + i);
+    blobs.push(blob);
+  }
+  return blobs;
+}
+
 /**
  * Client-side image resize.
  * Returns a Promise<Blob> — JPEG at 80% quality, max 1200px on longest side.
@@ -824,23 +898,53 @@ function renderBracketPhotosList() {
   }).join('');
 }
 
-/** User picked new files via the "+ Add bracket photo(s)" input */
-function onBracketPhotosAdded(input) {
+/**
+ * User picked new files via the "+ Add bracket photo(s)" input.
+ * For PDFs, each page becomes its own bracket-photo entry (rendered
+ * to 2400px JPEG via pdf.js). For images, we keep the current flow.
+ * Entries flagged `preProcessed: true` skip resizeImage at save time
+ * so we don't downsample the already-crisp PDF renders.
+ */
+async function onBracketPhotosAdded(input) {
   const files = Array.from(input.files || []);
   if (!files.length) return;
-  let pending = files.length;
-  for (const f of files) {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      bracketPhotosState.push({ kind: 'new', file: f, previewUrl: e.target.result });
-      pending--;
-      if (pending === 0) renderBracketPhotosList();
-    };
-    reader.onerror = () => { pending--; if (pending === 0) renderBracketPhotosList(); };
-    reader.readAsDataURL(f);
-  }
-  // Reset the input so the same file can be re-picked if the user removes it
+  // Reset the input immediately so re-picking the same file after a remove still fires change.
   input.value = '';
+
+  const addLabel = document.getElementById('bracket-add-label');
+  const origLabel = addLabel ? addLabel.textContent : '';
+
+  try {
+    for (const f of files) {
+      if (isPdf(f)) {
+        if (addLabel) addLabel.textContent = 'Rendering ' + f.name + '…';
+        const pages = await pdfToJpegPages(f, { maxWidth: 2400, quality: 0.9 });
+        for (let i = 0; i < pages.length; i++) {
+          const pageBlob = pages[i];
+          const base = (f.name || 'document').replace(/\.pdf$/i, '');
+          const pageFile = new File([pageBlob], base + '_p' + (i + 1) + '.jpg', { type: 'image/jpeg' });
+          bracketPhotosState.push({
+            kind: 'new',
+            file: pageFile,
+            previewUrl: await blobToDataUrl(pageBlob),
+            preProcessed: true
+          });
+        }
+      } else {
+        bracketPhotosState.push({
+          kind: 'new',
+          file: f,
+          previewUrl: await blobToDataUrl(f),
+          preProcessed: false
+        });
+      }
+    }
+  } catch (e) {
+    showStatus('Failed to add photo(s): ' + e.message, 'err');
+  } finally {
+    if (addLabel) addLabel.textContent = origLabel;
+    renderBracketPhotosList();
+  }
 }
 
 function removeBracketPhoto(i) {
@@ -865,21 +969,49 @@ function switchTab(name) {
 }
 
 /* ---------- File input UI ---------- */
-function onFileSelected(input, labelId, previewId) {
-  const label = document.getElementById(labelId);
+/**
+ * Called when the user picks a trophy / runner-up file. Handles both
+ * images (straight preview) and PDFs (renders page 1 at preview res
+ * via pdf.js and caches the 2400px-quality page blob on the input
+ * element as `_pdfHighRes` so the save flow can upload it without
+ * re-rendering).
+ */
+async function onFileSelected(input, labelId, previewId) {
+  const label   = document.getElementById(labelId);
   const preview = document.getElementById(previewId);
-  if (input.files && input.files[0]) {
-    label.textContent = input.files[0].name;
-    label.classList.add('has-file');
-    // Show preview
-    const reader = new FileReader();
-    reader.onload = e => { preview.src = e.target.result; preview.classList.remove('hidden'); };
-    reader.readAsDataURL(input.files[0]);
-  } else {
-    label.textContent = 'Choose image...';
+  const file    = input.files && input.files[0];
+
+  if (!file) {
+    label.textContent = 'Choose image or PDF...';
     label.classList.remove('has-file');
     preview.classList.add('hidden');
     preview.src = '';
+    delete input._pdfHighRes;
+    return;
+  }
+
+  label.textContent = file.name;
+  label.classList.add('has-file');
+  delete input._pdfHighRes;
+
+  try {
+    if (isPdf(file)) {
+      // Two render passes: a small one for instant preview, and the
+      // upload-quality one cached for save-time. Both run off the same
+      // pdf.js load so cost is amortized.
+      label.textContent = file.name + ' — rendering PDF…';
+      const highRes = await pdfToJpegPages(file, { maxWidth: 2400, quality: 0.9 });
+      input._pdfHighRes = highRes[0];  // single-slot → page 1 only
+      preview.src = await blobToDataUrl(highRes[0]);
+      preview.classList.remove('hidden');
+      label.textContent = file.name + (highRes.length > 1 ? ' (' + highRes.length + ' pages, using page 1)' : '');
+    } else {
+      preview.src = await blobToDataUrl(file);
+      preview.classList.remove('hidden');
+    }
+  } catch (e) {
+    showStatus('Could not read file: ' + e.message, 'err');
+    label.textContent = file.name + ' (failed)';
   }
 }
 
@@ -1261,12 +1393,17 @@ function cancelBracketEdit() {
   document.getElementById('brk-players').value = '';
   document.getElementById('brk-runner-players').value = '';
   document.getElementById('brk-area').value = '';
-  document.getElementById('brk-trophy-file').value = '';
-  document.getElementById('brk-runnerup-file').value = '';
-  document.getElementById('brk-bracket-files').value = '';
-  document.getElementById('trophy-label').textContent = 'Choose image...';
+  const trophyInputC   = document.getElementById('brk-trophy-file');
+  const runnerupInputC = document.getElementById('brk-runnerup-file');
+  const bracketInputC  = document.getElementById('brk-bracket-files');
+  trophyInputC.value   = '';
+  runnerupInputC.value = '';
+  bracketInputC.value  = '';
+  delete trophyInputC._pdfHighRes;
+  delete runnerupInputC._pdfHighRes;
+  document.getElementById('trophy-label').textContent = 'Choose image or PDF...';
   document.getElementById('trophy-label').classList.remove('has-file');
-  document.getElementById('runnerup-label').textContent = 'Choose image...';
+  document.getElementById('runnerup-label').textContent = 'Choose image or PDF...';
   document.getElementById('runnerup-label').classList.remove('has-file');
   document.getElementById('trophy-preview').classList.add('hidden');
   document.getElementById('trophy-preview').src = '';
@@ -1301,9 +1438,14 @@ function editBracket(id) {
   document.getElementById('brk-runner-players').value = b.runner_up_players || '';
   document.getElementById('brk-area').value = b.area_id || '';
   // Clear file inputs (user must re-select to replace)
-  document.getElementById('brk-trophy-file').value = '';
-  document.getElementById('brk-runnerup-file').value = '';
-  document.getElementById('brk-bracket-files').value = '';
+  const editTrophy   = document.getElementById('brk-trophy-file');
+  const editRunnerup = document.getElementById('brk-runnerup-file');
+  const editBrackets = document.getElementById('brk-bracket-files');
+  editTrophy.value   = '';
+  editRunnerup.value = '';
+  editBrackets.value = '';
+  delete editTrophy._pdfHighRes;
+  delete editRunnerup._pdfHighRes;
   // Show existing champion photo
   if (b.trophy_photo_path) {
     document.getElementById('trophy-label').textContent = 'Current photo (re-select to replace)';
@@ -1407,18 +1549,20 @@ async function saveBracket() {
       bracketId = created[0].id;
     }
 
-    // Champion photo
+    // Champion photo — PDF first page was pre-rendered on selection; use that blob as-is.
     if (trophyFile) {
-      const resized = await resizeImage(trophyFile);
+      const trophyInput = document.getElementById('brk-trophy-file');
+      const blob = trophyInput._pdfHighRes ? trophyInput._pdfHighRes : await resizeImage(trophyFile);
       if (editId && trophyPath) await deleteStorageFile(trophyPath);
-      trophyPath = await uploadImage(resized, slug, bracketId, 'trophy');
+      trophyPath = await uploadImage(blob, slug, bracketId, 'trophy');
     }
 
     // Runner-up photo
     if (runnerupFile) {
-      const resized = await resizeImage(runnerupFile);
+      const runnerupInput = document.getElementById('brk-runnerup-file');
+      const blob = runnerupInput._pdfHighRes ? runnerupInput._pdfHighRes : await resizeImage(runnerupFile);
       if (editId && runnerUpPath) await deleteStorageFile(runnerUpPath);
-      runnerUpPath = await uploadImage(resized, slug, bracketId, 'runnerup');
+      runnerUpPath = await uploadImage(blob, slug, bracketId, 'runnerup');
     }
 
     // Bracket photos — iterate the composer state in order, uploading new files
@@ -1429,9 +1573,9 @@ async function saveBracket() {
       if (entry.kind === 'existing') {
         finalBracketPaths.push(entry.path);
       } else {
-        // New file — resize and upload. Include index to avoid same-ms collision.
-        const resized = await resizeImage(entry.file);
-        const path = await uploadImage(resized, slug, bracketId, 'bracket' + (i + 1));
+        // PDF pages arrive already at upload resolution — skip resize.
+        const blob = entry.preProcessed ? entry.file : await resizeImage(entry.file);
+        const path = await uploadImage(blob, slug, bracketId, 'bracket' + (i + 1));
         finalBracketPaths.push(path);
       }
     }

@@ -441,7 +441,17 @@
       max-height: 90vh;
       border-radius: 8px;
       box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+      /* Pinch-zoom implemented via pointer events + CSS transform.
+         touch-action:none tells the browser not to claim these gestures. */
+      touch-action: none;
+      transform-origin: 0 0;
+      will-change: transform;
+      user-select: none;
+      -webkit-user-drag: none;
+      cursor: zoom-in;
     }
+    .lightbox.zoomed img { cursor: grab; }
+    .lightbox.zoomed img:active { cursor: grabbing; }
 
     .lightbox-close {
       position: absolute;
@@ -564,7 +574,7 @@
 
   <!-- ═══ Footer ═══ -->
   <footer class="site-footer">
-    APA NW Challenge 2026 &mdash; Trophy Case v0.5
+    APA NW Challenge 2026 &mdash; Trophy Case v0.6
   </footer>
 
   <script>
@@ -888,6 +898,7 @@
       lightboxImg.src = src || '';
       lightboxImg.alt = 'Photo ' + (lightboxIndex + 1) + ' of ' + lightboxImages.length;
       lightboxCounter.textContent = (lightboxIndex + 1) + ' / ' + lightboxImages.length;
+      resetZoom();
     }
 
     function closeLightbox() {
@@ -896,6 +907,7 @@
       lightboxImages = [];
       lightboxIndex = 0;
       document.body.style.overflow = '';
+      resetZoom();
     }
 
     function lightboxPrevImg() {
@@ -915,9 +927,10 @@
     lightboxPrev.addEventListener('click', function(e) { e.stopPropagation(); lightboxPrevImg(); });
     lightboxNext.addEventListener('click', function(e) { e.stopPropagation(); lightboxNextImg(); });
 
-    // Click outside image (or on backdrop) closes
+    // Click outside image (or on backdrop) closes — but only at rest zoom,
+    // so a pinch-pan that releases on the backdrop doesn't accidentally close.
     lightbox.addEventListener('click', function(e) {
-      if (e.target === lightbox) closeLightbox();
+      if (e.target === lightbox && zoom.scale === 1) closeLightbox();
     });
 
     // Keyboard: Escape closes, Arrow keys navigate
@@ -928,9 +941,137 @@
       else if (e.key === 'ArrowRight') lightboxNextImg();
     });
 
-    // Touch: swipe left/right to navigate (30px minimum delta)
+    /* ════════════════════════════════════════════════════════════════
+       Pinch-zoom + pan on the lightbox image.
+       Uses Pointer Events so touch + mouse + pen share one code path.
+       State:
+         zoom.scale   current scale factor (1 .. MAX_SCALE)
+         zoom.tx, ty  current translation of the image (CSS pixels)
+       Gestures:
+         - Two pointers  → pinch-zoom anchored at the midpoint (fixed point).
+         - One pointer + scale>1 → pan.
+         - Double-tap / double-click → toggle 1x ⇄ 2.5x, anchored at the
+           tap point so the tapped spot stays where the user tapped.
+         - Single-finger swipe at scale===1 → prev/next (see below).
+         - Pinch-to-zoom-out past 1 snaps back to 1 on release.
+       ════════════════════════════════════════════════════════════════ */
+    const MAX_SCALE = 5;
+    const DOUBLE_TAP_MS = 280;
+    const zoom = { scale: 1, tx: 0, ty: 0 };
+    const pointers = new Map();  // id → { x, y }
+    let pinchStart = null;        // {distance, midpoint, scale, tx, ty} at gesture start
+    let panStart   = null;        // {pointerX, pointerY, tx, ty} at drag start
+    let lastTapAt  = 0;
+
+    function applyTransform() {
+      lightboxImg.style.transform =
+        'translate(' + zoom.tx + 'px, ' + zoom.ty + 'px) scale(' + zoom.scale + ')';
+      lightbox.classList.toggle('zoomed', zoom.scale > 1.001);
+    }
+
+    function resetZoom() {
+      zoom.scale = 1; zoom.tx = 0; zoom.ty = 0;
+      pointers.clear();
+      pinchStart = null;
+      panStart = null;
+      applyTransform();
+    }
+
+    /** Zoom to a target scale anchored at a viewport point. */
+    function zoomAtPoint(targetScale, px, py) {
+      targetScale = Math.max(1, Math.min(MAX_SCALE, targetScale));
+      const rect = lightboxImg.getBoundingClientRect();
+      // Image-local coordinates of the anchor point at the current scale.
+      const lx = (px - rect.left) / zoom.scale;
+      const ly = (py - rect.top) / zoom.scale;
+      zoom.tx = px - lx * targetScale - (rect.left - zoom.tx);
+      zoom.ty = py - ly * targetScale - (rect.top - zoom.ty);
+      zoom.scale = targetScale;
+      if (zoom.scale <= 1.001) { zoom.tx = 0; zoom.ty = 0; zoom.scale = 1; }
+      applyTransform();
+    }
+
+    lightboxImg.addEventListener('pointerdown', function(e) {
+      // Double-tap/click → toggle zoom at the tap point.
+      const now = Date.now();
+      const isDoubleTap = (now - lastTapAt) < DOUBLE_TAP_MS && pointers.size === 0;
+      lastTapAt = now;
+
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      lightboxImg.setPointerCapture(e.pointerId);
+
+      if (isDoubleTap) {
+        const target = zoom.scale > 1.001 ? 1 : 2.5;
+        zoomAtPoint(target, e.clientX, e.clientY);
+        e.preventDefault();
+        return;
+      }
+
+      if (pointers.size === 2) {
+        const [a, b] = [...pointers.values()];
+        pinchStart = {
+          distance: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+          midpoint: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+          scale: zoom.scale,
+          tx: zoom.tx,
+          ty: zoom.ty
+        };
+        panStart = null;
+      } else if (pointers.size === 1 && zoom.scale > 1.001) {
+        panStart = { pointerX: e.clientX, pointerY: e.clientY, tx: zoom.tx, ty: zoom.ty };
+      }
+      e.preventDefault();
+    });
+
+    lightboxImg.addEventListener('pointermove', function(e) {
+      if (!pointers.has(e.pointerId)) return;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (pointers.size === 2 && pinchStart) {
+        const [a, b] = [...pointers.values()];
+        const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+        const newScale = Math.max(1, Math.min(MAX_SCALE, pinchStart.scale * (dist / pinchStart.distance)));
+        // Anchor: keep the pinch midpoint over the same image pixel.
+        const m = pinchStart.midpoint;
+        const k = newScale / pinchStart.scale;
+        zoom.scale = newScale;
+        zoom.tx = m.x - (m.x - pinchStart.tx) * k;
+        zoom.ty = m.y - (m.y - pinchStart.ty) * k;
+        applyTransform();
+      } else if (pointers.size === 1 && panStart && zoom.scale > 1.001) {
+        zoom.tx = panStart.tx + (e.clientX - panStart.pointerX);
+        zoom.ty = panStart.ty + (e.clientY - panStart.pointerY);
+        applyTransform();
+      }
+    });
+
+    function releasePointer(e) {
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) pinchStart = null;
+      if (pointers.size < 1) panStart = null;
+      // Snap back to 1x if the user pinched out past 1.
+      if (zoom.scale < 1.02) {
+        zoom.scale = 1; zoom.tx = 0; zoom.ty = 0;
+        applyTransform();
+      }
+    }
+    lightboxImg.addEventListener('pointerup', releasePointer);
+    lightboxImg.addEventListener('pointercancel', releasePointer);
+
+    // Mouse wheel → zoom on desktop (shift+wheel for finer control).
+    lightboxImg.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      const step = e.shiftKey ? 0.05 : 0.15;
+      const target = zoom.scale * (e.deltaY < 0 ? (1 + step) : (1 - step));
+      zoomAtPoint(target, e.clientX, e.clientY);
+    }, { passive: false });
+
+    /* ── Swipe left/right on the backdrop to nav — only at rest zoom ── */
     let touchStartX = 0;
     lightbox.addEventListener('touchstart', function(e) {
+      // Skip when image is zoomed (panning) or when gesture started on the image.
+      if (zoom.scale > 1.001) { touchStartX = 0; return; }
+      if (e.target === lightboxImg) { touchStartX = 0; return; }
       if (e.touches.length === 1) touchStartX = e.touches[0].clientX;
     }, { passive: true });
     lightbox.addEventListener('touchend', function(e) {
