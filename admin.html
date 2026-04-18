@@ -650,7 +650,7 @@
     </div><!-- /admin -->
   </div><!-- /page -->
 
-  <div class="footer">Trophy Case Admin v0.7</div>
+  <div class="footer">Trophy Case Admin v0.8</div>
 
 <script>
 /* ============================================================
@@ -736,15 +736,21 @@ async function sb(method, path, body, useWrite) {
   return null;
 }
 
-/** Upload image to Supabase Storage. Returns the public path. */
+/** Upload image to Supabase Storage. Returns the public path.
+ *  Extension + content-type are derived from blob.type so PNG bracket
+ *  renders get '.png' / 'image/png' and regular photos stay '.jpg'. */
 async function uploadImage(file, folder, bracketId, type) {
-  const ts = Date.now();
-  const path = folder + '/' + bracketId + '_' + type + '_' + ts + '.jpg';
+  const ts   = Date.now();
+  const mime = (file && file.type) || 'image/jpeg';
+  const ext  = mime === 'image/png'  ? 'png'
+            : mime === 'image/webp' ? 'webp'
+            : 'jpg';
+  const path = folder + '/' + bracketId + '_' + type + '_' + ts + '.' + ext;
   const r = await fetch(SB_URL + '/storage/v1/object/trophy-case-photos/' + path, {
     method: 'PUT',
     headers: {
       'Authorization': 'Bearer ' + SB_WRITE,
-      'Content-Type': 'image/jpeg',
+      'Content-Type': mime,
       'x-upsert': 'true'
     },
     body: file
@@ -814,14 +820,25 @@ function blobToDataUrl(blob) {
 }
 
 /**
- * Render every page of a PDF File/Blob to a JPEG Blob.
- * Default target width 2400px @ 0.9 quality — crisp enough to read
- * bracket text on a phone pinch-zoom without bloating storage.
- * Returns Promise<Blob[]>  (one per page, in order).
+ * Render every page of a PDF File/Blob to an image Blob.
+ *
+ * Options:
+ *   maxWidth:  target pixel width (default 2400)
+ *   format:    'png' (default, lossless — best for text / line art) or 'jpeg'
+ *   quality:   0..1, only honored for 'jpeg' (default 0.92)
+ *
+ * Bracket sheets are dense text + thin lines, so PNG at 3600px beats
+ * JPEG at any quality — no DCT ringing on strokes, no compression of
+ * small type. File sizes end up 1-3 MB per page, which is fine for
+ * this app's storage footprint and load frequency.
+ *
+ * Returns Promise<Blob[]> — one blob per page, in order.
  */
-async function pdfToJpegPages(file, opts) {
+async function pdfToImagePages(file, opts) {
   const maxWidth = (opts && opts.maxWidth) || 2400;
-  const quality  = (opts && opts.quality)  || 0.9;
+  const format   = (opts && opts.format)   || 'png';
+  const quality  = (opts && opts.quality)  || 0.92;
+  const mime     = format === 'jpeg' ? 'image/jpeg' : 'image/png';
   const pdfjsLib = await ensurePdfJs();
   const buf      = await file.arrayBuffer();
   const pdf      = await pdfjsLib.getDocument({ data: buf }).promise;
@@ -839,12 +856,19 @@ async function pdfToJpegPages(file, opts) {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     await page.render({ canvasContext: ctx, viewport }).promise;
-    const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', quality));
+    const blob = await new Promise(res =>
+      format === 'jpeg'
+        ? canvas.toBlob(res, mime, quality)
+        : canvas.toBlob(res, mime)
+    );
     if (!blob) throw new Error('Canvas toBlob failed on page ' + i);
     blobs.push(blob);
   }
   return blobs;
 }
+
+// Backwards-compatible alias in case something still references the old name.
+const pdfToJpegPages = pdfToImagePages;
 
 /**
  * Client-side image resize.
@@ -926,11 +950,13 @@ async function onBracketPhotosAdded(input) {
     for (const f of files) {
       if (isPdf(f)) {
         if (addLabel) addLabel.textContent = 'Rendering ' + f.name + '…';
-        const pages = await pdfToJpegPages(f, { maxWidth: 2400, quality: 0.9 });
+        // Bracket sheets are dense text + thin rules → PNG at 3600px
+        // so pinch-zoom stays legible. Yes, ~2-3 MB per page; worth it.
+        const pages = await pdfToImagePages(f, { maxWidth: 3600, format: 'png' });
         for (let i = 0; i < pages.length; i++) {
           const pageBlob = pages[i];
           const base = (f.name || 'document').replace(/\.pdf$/i, '');
-          const pageFile = new File([pageBlob], base + '_p' + (i + 1) + '.jpg', { type: 'image/jpeg' });
+          const pageFile = new File([pageBlob], base + '_p' + (i + 1) + '.png', { type: 'image/png' });
           bracketPhotosState.push({
             kind: 'new',
             file: pageFile,
@@ -1008,7 +1034,9 @@ async function onFileSelected(input, labelId, previewId) {
       // upload-quality one cached for save-time. Both run off the same
       // pdf.js load so cost is amortized.
       label.textContent = file.name + ' — rendering PDF…';
-      const highRes = await pdfToJpegPages(file, { maxWidth: 2400, quality: 0.9 });
+      // PNG at 2400px — lossless, handles single-slot photos (usually
+      // a trophy photo embedded in a PDF) without JPEG ringing.
+      const highRes = await pdfToImagePages(file, { maxWidth: 2400, format: 'png' });
       input._pdfHighRes = highRes[0];  // single-slot → page 1 only
       preview.src = await blobToDataUrl(highRes[0]);
       preview.classList.remove('hidden');
