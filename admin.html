@@ -1337,7 +1337,11 @@ async function loadBrackets(eventId) {
   empty.classList.add('hidden');
   list.innerHTML = '';
   try {
-    bracketsCache = await sb('GET', 'trophy_brackets?event_id=eq.' + eventId + '&select=*,trophy_areas(name),trophy_events(slug)&order=skill_level.asc.nullslast,id.asc');
+    // Explicit FK name on the trophy_areas embed — there are two FKs
+    // from trophy_brackets to trophy_areas (area_id and runner_up_area_id),
+    // so PostgREST requires disambiguation. Runner-up area is looked up
+    // from areasCache in renderBrackets instead of double-embedding.
+    bracketsCache = await sb('GET', 'trophy_brackets?event_id=eq.' + eventId + '&select=*,trophy_areas!trophy_brackets_area_id_fkey(name),trophy_events(slug)&order=skill_level.asc.nullslast,id.asc');
     renderBrackets();
   } catch (e) {
     showStatus('Failed to load brackets: ' + e.message, 'err');
