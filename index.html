@@ -398,30 +398,40 @@
     }
 
     /* ── Lightbox ───────────────────────────────────────────────────── */
+    /* The image is absolutely positioned INSIDE this box and drawn at
+       its intrinsic (natural) resolution. A transform combines fit-to-
+       viewport scaling and user pinch-zoom into a single scale factor,
+       so the browser always rasterizes from the source bitmap. This is
+       deliberately NOT a flex-centered + max-width design — that design
+       makes the browser cache a downsampled texture and blurs zoom. */
     .lightbox {
       position: fixed;
       inset: 0;
       z-index: 9999;
       background: rgba(0, 0, 0, 0.92);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
+      overflow: hidden;
     }
 
     .lightbox img {
-      max-width: 100%;
-      max-height: 90vh;
+      position: absolute;
+      top: 0;
+      left: 0;
       border-radius: 8px;
       box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
       /* Pinch-zoom implemented via pointer events + CSS transform.
          touch-action:none tells the browser not to claim these gestures. */
       touch-action: none;
       transform-origin: 0 0;
-      will-change: transform;
+      /* NOTE: no will-change: transform. Forcing a compositor layer
+         causes the GPU texture to be rasterized at layout size; when
+         transform:scale() then zooms in, the browser upscales that
+         small cached texture instead of re-sampling from the high-res
+         bitmap, producing blurry text. Letting the browser rasterize
+         on the fly keeps pinch-zoom crisp at every zoom level. */
       user-select: none;
       -webkit-user-drag: none;
       cursor: zoom-in;
+      image-rendering: -webkit-optimize-contrast;  /* nudge crisper text on upscale */
     }
     .lightbox.zoomed img { cursor: grab; }
     .lightbox.zoomed img:active { cursor: grabbing; }
@@ -547,7 +557,7 @@
 
   <!-- ═══ Footer ═══ -->
   <footer class="site-footer">
-    APA NW Challenge 2026 &mdash; Trophy Case v0.8
+    APA NW Challenge 2026 &mdash; Trophy Case v0.9
   </footer>
 
   <script>
@@ -889,10 +899,22 @@
 
     function updateLightbox() {
       const src = lightboxImages[lightboxIndex];
-      lightboxImg.src = src || '';
       lightboxImg.alt = 'Photo ' + (lightboxIndex + 1) + ' of ' + lightboxImages.length;
       lightboxCounter.textContent = (lightboxIndex + 1) + ' / ' + lightboxImages.length;
-      resetZoom();
+      // Hide while swapping sources so the prior image doesn't briefly
+      // render at its (now-wrong) transform before the new one loads.
+      lightboxImg.style.visibility = 'hidden';
+      lightboxImg.onload = function handleLoad() {
+        lightboxImg.onload = null;
+        lightboxImg.style.visibility = 'visible';
+        // naturalWidth/Height are available now → compute a real fit.
+        resetZoom();
+      };
+      lightboxImg.src = src || '';
+      // Cached images may not fire load on some browsers; kick once if ready.
+      if (lightboxImg.complete && lightboxImg.naturalWidth > 0) {
+        lightboxImg.onload && lightboxImg.onload();
+      }
     }
 
     function closeLightbox() {
@@ -924,7 +946,7 @@
     // Click outside image (or on backdrop) closes — but only at rest zoom,
     // so a pinch-pan that releases on the backdrop doesn't accidentally close.
     lightbox.addEventListener('click', function(e) {
-      if (e.target === lightbox && zoom.scale === 1) closeLightbox();
+      if (e.target === lightbox && zoom.scale <= zoom.fitScale * 1.001) closeLightbox();
     });
 
     // Keyboard: Escape closes, Arrow keys navigate
@@ -937,51 +959,115 @@
 
     /* ════════════════════════════════════════════════════════════════
        Pinch-zoom + pan on the lightbox image.
-       Uses Pointer Events so touch + mouse + pen share one code path.
+
+       Why this shape: the image is rendered at its intrinsic size and
+       positioned absolutely; a single CSS transform handles BOTH fit-
+       to-viewport scaling and user zoom. Keeping both in one transform
+       means every zoom level rasterizes from the full-resolution source
+       bitmap instead of from a compositor-cached downsample, so pinch-
+       zoomed bracket text stays crisp.
+
        State:
-         zoom.scale   current scale factor (1 .. MAX_SCALE)
-         zoom.tx, ty  current translation of the image (CSS pixels)
+         zoom.fitScale  scale at which the natural image fits the lightbox
+         zoom.scale     current CSS scale factor (≥ fitScale, ≤ fitScale*MAX_ZOOM_MULT)
+         zoom.tx, ty    current translation of the image (CSS pixels)
        Gestures:
-         - Two pointers  → pinch-zoom anchored at the midpoint (fixed point).
-         - One pointer + scale>1 → pan.
-         - Double-tap / double-click → toggle 1x ⇄ 2.5x, anchored at the
-           tap point so the tapped spot stays where the user tapped.
-         - Single-finger swipe at scale===1 → prev/next (see below).
-         - Pinch-to-zoom-out past 1 snaps back to 1 on release.
+         - Two pointers  → pinch-zoom anchored at the midpoint.
+         - One pointer + scale>fit → pan (clamped to keep image onscreen).
+         - Double-tap / double-click → toggle fit ⇄ fit*2.5.
+         - Single-finger swipe at rest zoom → prev/next.
+         - Pinch-out past fit snaps back to fit on release.
        ════════════════════════════════════════════════════════════════ */
-    const MAX_SCALE = 5;
+    const MAX_ZOOM_MULT = 6;       // highest scale = fitScale × 6
     const DOUBLE_TAP_MS = 280;
-    const zoom = { scale: 1, tx: 0, ty: 0 };
+    const DOUBLE_TAP_ZOOM = 2.5;   // double-tap zooms to fitScale × 2.5
+    const zoom = { scale: 1, tx: 0, ty: 0, fitScale: 1 };
     const pointers = new Map();  // id → { x, y }
     let pinchStart = null;        // {distance, midpoint, scale, tx, ty} at gesture start
     let panStart   = null;        // {pointerX, pointerY, tx, ty} at drag start
     let lastTapAt  = 0;
 
+    function viewportSize() {
+      return { w: lightbox.clientWidth, h: lightbox.clientHeight };
+    }
+
+    /** Recalculate fitScale from the currently-loaded image + viewport. */
+    function computeFit() {
+      const nw = lightboxImg.naturalWidth;
+      const nh = lightboxImg.naturalHeight;
+      if (!nw || !nh) { zoom.fitScale = 1; return; }
+      const { w, h } = viewportSize();
+      // Cap at 1 so a small source isn't blown up just to fill screen.
+      zoom.fitScale = Math.min(w / nw, h / nh, 1);
+    }
+
+    /** Clamp tx/ty so the scaled image stays inside the viewport
+     *  along any axis where it's larger than the viewport, and is
+     *  perfectly centered along any axis where it's smaller. */
+    function clampPan() {
+      const nw = lightboxImg.naturalWidth * zoom.scale;
+      const nh = lightboxImg.naturalHeight * zoom.scale;
+      const { w, h } = viewportSize();
+      if (nw <= w) {
+        zoom.tx = (w - nw) / 2;
+      } else {
+        if (zoom.tx > 0) zoom.tx = 0;
+        if (zoom.tx + nw < w) zoom.tx = w - nw;
+      }
+      if (nh <= h) {
+        zoom.ty = (h - nh) / 2;
+      } else {
+        if (zoom.ty > 0) zoom.ty = 0;
+        if (zoom.ty + nh < h) zoom.ty = h - nh;
+      }
+    }
+
     function applyTransform() {
       lightboxImg.style.transform =
         'translate(' + zoom.tx + 'px, ' + zoom.ty + 'px) scale(' + zoom.scale + ')';
-      lightbox.classList.toggle('zoomed', zoom.scale > 1.001);
+      lightbox.classList.toggle('zoomed', zoom.scale > zoom.fitScale * 1.001);
     }
 
+    /** Called after an image loads or the viewport resizes: recompute
+     *  fitScale and center the image at its fit-size transform. */
     function resetZoom() {
-      zoom.scale = 1; zoom.tx = 0; zoom.ty = 0;
+      computeFit();
+      zoom.scale = zoom.fitScale;
+      // Center the scaled image in the viewport.
+      const nw = lightboxImg.naturalWidth || 0;
+      const nh = lightboxImg.naturalHeight || 0;
+      const { w, h } = viewportSize();
+      zoom.tx = (w - nw * zoom.scale) / 2;
+      zoom.ty = (h - nh * zoom.scale) / 2;
       pointers.clear();
       pinchStart = null;
       panStart = null;
       applyTransform();
     }
 
-    /** Zoom to a target scale anchored at a viewport point. */
+    /** Zoom to a target CSS scale, anchored at viewport point (px, py).
+     *  Target is clamped to [fitScale, fitScale * MAX_ZOOM_MULT]. */
     function zoomAtPoint(targetScale, px, py) {
-      targetScale = Math.max(1, Math.min(MAX_SCALE, targetScale));
-      const rect = lightboxImg.getBoundingClientRect();
-      // Image-local coordinates of the anchor point at the current scale.
-      const lx = (px - rect.left) / zoom.scale;
-      const ly = (py - rect.top) / zoom.scale;
-      zoom.tx = px - lx * targetScale - (rect.left - zoom.tx);
-      zoom.ty = py - ly * targetScale - (rect.top - zoom.ty);
+      const minS = zoom.fitScale;
+      const maxS = zoom.fitScale * MAX_ZOOM_MULT;
+      targetScale = Math.max(minS, Math.min(maxS, targetScale));
+      // Image-local coords (i.e. the source-bitmap pixel) under the anchor.
+      const lx = (px - zoom.tx) / zoom.scale;
+      const ly = (py - zoom.ty) / zoom.scale;
+      zoom.tx = px - lx * targetScale;
+      zoom.ty = py - ly * targetScale;
       zoom.scale = targetScale;
-      if (zoom.scale <= 1.001) { zoom.tx = 0; zoom.ty = 0; zoom.scale = 1; }
+      // Snap to fit and recenter when we're essentially back at rest.
+      if (Math.abs(zoom.scale - zoom.fitScale) < 0.002) {
+        zoom.scale = zoom.fitScale;
+        const nw = lightboxImg.naturalWidth || 0;
+        const nh = lightboxImg.naturalHeight || 0;
+        const { w, h } = viewportSize();
+        zoom.tx = (w - nw * zoom.scale) / 2;
+        zoom.ty = (h - nh * zoom.scale) / 2;
+      } else {
+        clampPan();
+      }
       applyTransform();
     }
 
@@ -995,7 +1081,8 @@
       lightboxImg.setPointerCapture(e.pointerId);
 
       if (isDoubleTap) {
-        const target = zoom.scale > 1.001 ? 1 : 2.5;
+        const atRest = zoom.scale <= zoom.fitScale * 1.001;
+        const target = atRest ? zoom.fitScale * DOUBLE_TAP_ZOOM : zoom.fitScale;
         zoomAtPoint(target, e.clientX, e.clientY);
         e.preventDefault();
         return;
@@ -1011,7 +1098,7 @@
           ty: zoom.ty
         };
         panStart = null;
-      } else if (pointers.size === 1 && zoom.scale > 1.001) {
+      } else if (pointers.size === 1 && zoom.scale > zoom.fitScale * 1.001) {
         panStart = { pointerX: e.clientX, pointerY: e.clientY, tx: zoom.tx, ty: zoom.ty };
       }
       e.preventDefault();
@@ -1024,17 +1111,21 @@
       if (pointers.size === 2 && pinchStart) {
         const [a, b] = [...pointers.values()];
         const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
-        const newScale = Math.max(1, Math.min(MAX_SCALE, pinchStart.scale * (dist / pinchStart.distance)));
+        const minS = zoom.fitScale;
+        const maxS = zoom.fitScale * MAX_ZOOM_MULT;
+        const newScale = Math.max(minS, Math.min(maxS, pinchStart.scale * (dist / pinchStart.distance)));
         // Anchor: keep the pinch midpoint over the same image pixel.
         const m = pinchStart.midpoint;
         const k = newScale / pinchStart.scale;
         zoom.scale = newScale;
         zoom.tx = m.x - (m.x - pinchStart.tx) * k;
         zoom.ty = m.y - (m.y - pinchStart.ty) * k;
+        clampPan();
         applyTransform();
-      } else if (pointers.size === 1 && panStart && zoom.scale > 1.001) {
+      } else if (pointers.size === 1 && panStart && zoom.scale > zoom.fitScale * 1.001) {
         zoom.tx = panStart.tx + (e.clientX - panStart.pointerX);
         zoom.ty = panStart.ty + (e.clientY - panStart.pointerY);
+        clampPan();
         applyTransform();
       }
     });
@@ -1043,9 +1134,14 @@
       pointers.delete(e.pointerId);
       if (pointers.size < 2) pinchStart = null;
       if (pointers.size < 1) panStart = null;
-      // Snap back to 1x if the user pinched out past 1.
-      if (zoom.scale < 1.02) {
-        zoom.scale = 1; zoom.tx = 0; zoom.ty = 0;
+      // Snap back to fit if the user pinched out past fit-level.
+      if (zoom.scale < zoom.fitScale * 1.02) {
+        zoom.scale = zoom.fitScale;
+        const nw = lightboxImg.naturalWidth || 0;
+        const nh = lightboxImg.naturalHeight || 0;
+        const { w, h } = viewportSize();
+        zoom.tx = (w - nw * zoom.scale) / 2;
+        zoom.ty = (h - nh * zoom.scale) / 2;
         applyTransform();
       }
     }
@@ -1060,11 +1156,22 @@
       zoomAtPoint(target, e.clientX, e.clientY);
     }, { passive: false });
 
+    // Viewport resize → re-fit (but preserve user zoom ratio on top of fit).
+    window.addEventListener('resize', function() {
+      if (lightbox.classList.contains('hidden')) return;
+      const oldFit = zoom.fitScale || 1;
+      const userRatio = zoom.scale / oldFit;
+      computeFit();
+      const target = Math.max(zoom.fitScale, Math.min(zoom.fitScale * MAX_ZOOM_MULT, zoom.fitScale * userRatio));
+      const { w, h } = viewportSize();
+      zoomAtPoint(target, w / 2, h / 2);
+    });
+
     /* ── Swipe left/right on the backdrop to nav — only at rest zoom ── */
     let touchStartX = 0;
     lightbox.addEventListener('touchstart', function(e) {
       // Skip when image is zoomed (panning) or when gesture started on the image.
-      if (zoom.scale > 1.001) { touchStartX = 0; return; }
+      if (zoom.scale > zoom.fitScale * 1.001) { touchStartX = 0; return; }
       if (e.target === lightboxImg) { touchStartX = 0; return; }
       if (e.touches.length === 1) touchStartX = e.touches[0].clientX;
     }, { passive: true });
