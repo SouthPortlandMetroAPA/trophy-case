@@ -331,6 +331,12 @@
       font-size: 0.8125rem;
       color: var(--text-muted);
       line-height: 1.4;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .player-list .player-row {
+      display: block;
     }
 
     .finisher-section.second .area-badge {
@@ -557,7 +563,7 @@
 
   <!-- ═══ Footer ═══ -->
   <footer class="site-footer">
-    APA NW Challenge 2026 &mdash; Trophy Case v0.9
+    APA NW Challenge 2026 &mdash; Trophy Case v0.10
   </footer>
 
   <script>
@@ -810,7 +816,7 @@
         if (teamLabel)  detailsHtml += '<div class="team-name">' + esc(teamLabel) + '</div>';
         if (players) {
           const names = players.split(',').map(n => esc(n.trim())).filter(Boolean);
-          if (names.length) detailsHtml += '<div class="player-list">' + names.join(' &bull; ') + '</div>';
+          if (names.length) detailsHtml += '<div class="player-list">' + names.map(n => '<span class="player-row">' + n + '</span>').join('') + '</div>';
         }
         if (areaLabel)  detailsHtml += '<span class="area-badge">' + esc(areaLabel) + '</span>';
         detailsHtml += '</div>';
