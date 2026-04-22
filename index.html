@@ -790,6 +790,41 @@
        * placeholder background. Heading is omitted when includeHeading
        * is false (used for the single-champion fallback).
        */
+      /**
+       * Parse a free-form player roster string into one name per entry.
+       *
+       * Admins have entered this field in every conceivable way, so we
+       * handle four separator styles and then fall back to a word-pair
+       * heuristic:
+       *   1. Explicit separators — comma, semicolon, newline, " and ",
+       *      " & " — win first if present. This is the admin's signal.
+       *   2. If the input is one run of words (no explicit separator)
+       *      AND the word count is even AND ≥ 4, assume "First Last First
+       *      Last ..." and split into consecutive pairs. Handles the
+       *      common Scotch Doubles case of typing two player names with
+       *      only spaces between them.
+       *   3. Anything else (odd word count, 2-word single name, empty):
+       *      return as-is so it at least renders readable.
+       */
+      function splitPlayers(raw) {
+        if (!raw) return [];
+        const normalized = String(raw)
+          .replace(/\s+and\s+/gi, ',')
+          .replace(/\s*&\s*/g, ',')
+          .replace(/[\n;]+/g, ',');
+        let parts = normalized.split(',').map(s => s.trim()).filter(Boolean);
+        if (parts.length === 1) {
+          const words = parts[0].split(/\s+/).filter(Boolean);
+          if (words.length >= 4 && words.length % 2 === 0) {
+            parts = [];
+            for (let i = 0; i < words.length; i += 2) {
+              parts.push(words[i] + ' ' + words[i + 1]);
+            }
+          }
+        }
+        return parts;
+      }
+
       function finisherSection(opts) {
         const { kind, personName, photoPath, teamLabel, players, areaLabel, includeHeading } = opts;
         const headingText = kind === 'first' ? '1st Place' : '2nd Place';
@@ -815,7 +850,7 @@
         if (personName) detailsHtml += '<div class="name">' + esc(personName) + '</div>';
         if (teamLabel)  detailsHtml += '<div class="team-name">' + esc(teamLabel) + '</div>';
         if (players) {
-          const names = players.split(',').map(n => esc(n.trim())).filter(Boolean);
+          const names = splitPlayers(players).map(esc);
           if (names.length) detailsHtml += '<div class="player-list">' + names.map(n => '<span class="player-row">' + n + '</span>').join('') + '</div>';
         }
         if (areaLabel)  detailsHtml += '<span class="area-badge">' + esc(areaLabel) + '</span>';
