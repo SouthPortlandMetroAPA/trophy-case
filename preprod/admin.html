@@ -228,10 +228,19 @@
     .badge.gold { background: var(--gold); color: #000; }
 
     /* ---- Status line ---- */
+    /* Fixed: Save sits a long way below the top of the page on a phone, and a
+       message up there would never be seen. Tap to dismiss. */
     .status-line {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      z-index: 2000;
+      max-height: 40vh;
+      overflow: auto;
       padding: calc(var(--spacing) * 3);
       border-radius: var(--radius);
-      margin-bottom: calc(var(--spacing) * 3);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
       font-size: 0.9rem;
       display: none;
     }
@@ -457,7 +466,7 @@
 
   <div class="page">
     <!-- Status line — used globally -->
-    <div id="status" class="status-line"></div>
+    <div id="status" class="status-line" role="status" onclick="this.className='status-line'"></div>
 
     <!-- ==================== KEY GATE ==================== -->
     <div id="gate" class="key-gate">
@@ -705,6 +714,11 @@ let bracketPhotosState = [];
 
 /* ---------- Utilities ---------- */
 
+/** The role claim of a JWT, or '' if it isn't one */
+function jwtRole(j) {
+  try { return JSON.parse(atob(j.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).role || ''; } catch (e) { return ''; }
+}
+
 /** HTML-escape to prevent XSS */
 function esc(s) {
   if (s == null) return '';
@@ -719,11 +733,13 @@ function toSlug(s) {
 }
 
 /** Show status line */
+let _statusTimer = null;
 function showStatus(msg, type) {
   const el = document.getElementById('status');
+  clearTimeout(_statusTimer);   // an older "ok" timer must not clear this message
   el.textContent = msg;
   el.className = 'status-line shown ' + type;
-  if (type === 'ok') setTimeout(() => { el.className = 'status-line'; }, 4000);
+  if (type === 'ok') _statusTimer = setTimeout(() => { el.className = 'status-line'; }, 4000);
 }
 
 /** Supabase REST helper (read uses anon key, write uses service_role) */
@@ -818,7 +834,7 @@ function ensurePdfJs() {
     _pdfJsPromise = import(PDFJS_URL).then(mod => {
       mod.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
       return mod;
-    });
+    }).catch(e => { _pdfJsPromise = null; throw e; });   // a dropped load can be retried
   }
   return _pdfJsPromise;
 }
@@ -1216,7 +1232,9 @@ async function toggleEventActive(id, active) {
 }
 
 async function deleteEvent(id, name) {
-  if (!confirm('Delete event "' + name + '"? This will also delete all brackets for this event.')) return;
+  const delEv = eventsCache.find(e => e.id === id);
+  const delLabel = (delEv ? challengeLabel(delEv) + ' – ' : '') + name;
+  if (!confirm('Delete event "' + delLabel + '"? This also deletes all its winners and photos, for good.')) return;
   try {
     // First delete all brackets for this event (and their storage files)
     const brackets = await sb('GET', 'trophy_brackets?event_id=eq.' + id + '&select=id,trophy_photo_path,runner_up_photo_path,bracket_photo_paths');
@@ -1406,9 +1424,13 @@ function applyEventModeToBracketForm() {
   }
 }
 
+let bracketsLoadToken = 0;   // only the latest loadBrackets may render
 async function loadBrackets(eventId) {
   if (!eventId) eventId = document.getElementById('brk-event').value;
   if (!eventId) return;
+  // A slower earlier response must not paint another event's winners here: their
+  // Edit and Delete buttons would act on real rows under the wrong heading.
+  const token = ++bracketsLoadToken;
   const loading = document.getElementById('brackets-loading');
   const empty   = document.getElementById('brackets-empty');
   const list    = document.getElementById('brackets-list');
@@ -1420,12 +1442,15 @@ async function loadBrackets(eventId) {
     // from trophy_brackets to trophy_areas (area_id and runner_up_area_id),
     // so PostgREST requires disambiguation. Runner-up area is looked up
     // from areasCache in renderBrackets instead of double-embedding.
-    bracketsCache = await sb('GET', 'trophy_brackets?event_id=eq.' + eventId + '&select=*,trophy_areas!trophy_brackets_area_id_fkey(name),trophy_events(slug)&order=skill_level.asc.nullslast,id.asc');
+    const rows = await sb('GET', 'trophy_brackets?event_id=eq.' + eventId + '&select=*,trophy_areas!trophy_brackets_area_id_fkey(name),trophy_events(slug)&order=skill_level.asc.nullslast,id.asc');
+    if (token !== bracketsLoadToken) return;
+    bracketsCache = rows;
     renderBrackets();
   } catch (e) {
+    if (token !== bracketsLoadToken) return;
     showStatus('Failed to load brackets: ' + e.message, 'err');
   } finally {
-    loading.classList.add('hidden');
+    if (token === bracketsLoadToken) loading.classList.add('hidden');
   }
 }
 
@@ -1433,7 +1458,7 @@ function renderBrackets() {
   const list  = document.getElementById('brackets-list');
   const empty = document.getElementById('brackets-empty');
   const ev = eventsCache.find(e => String(e.id) === document.getElementById('brk-event').value);
-  document.getElementById('bracket-list-title').textContent = ev ? ev.name + ' Brackets' : 'Brackets';
+  document.getElementById('bracket-list-title').textContent = ev ? challengeLabel(ev) + ' – ' + ev.name + ' Brackets' : 'Brackets';
 
   if (!bracketsCache.length) {
     list.innerHTML = '';
@@ -1613,7 +1638,35 @@ async function saveBracket() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Saving...';
 
+  // Files first, the row last, old files only once the row no longer needs them.
+  // A venue's signal drops mid-save: players must never see a half-saved winner, a
+  // retry must not add a second one, and a failed replacement must leave the old
+  // photo in place. The row is what publishes, so it goes last.
+  const uploaded = [];       // this attempt's new files, removed if the save fails before the row
+  const stale = [];          // files to remove once the row stops pointing at them
+  let rowSent = false;       // past this point the row may have landed even if the call fails
+  // A new winner has no id until the row exists, so its files take their name from the clock.
+  const fileId = editId || ('new' + Date.now());
+  const upload = async (blob, type) => {
+    const path = await uploadImage(blob, slug, fileId, type);
+    uploaded.push(path);
+    return path;
+  };
+
   try {
+    // A save can land even though the phone never hears back. Catch the retry before
+    // it posts the same winner twice.
+    if (!editId) {
+      const same = await sb('GET', 'trophy_brackets?event_id=eq.' + parseInt(eventId, 10)
+        + '&winner_name=eq.' + encodeURIComponent(winnerName) + '&select=id');
+      if (same && same.length && !confirm('"' + winnerName + '" is already saved on this event. Add them again?')) {
+        showStatus('Nothing added. "' + winnerName + '" was already saved.', 'ok');
+        cancelBracketEdit();
+        await loadBrackets(eventId);
+        return;
+      }
+    }
+
     // Carry-forward state from the existing row (if editing)
     let trophyPath   = null;
     let runnerUpPath = null;
@@ -1630,42 +1683,22 @@ async function saveBracket() {
       }
     }
 
-    // For new brackets, insert the row first so we have an ID for path naming
-    let bracketId = editId;
-    if (!editId) {
-      const row = {
-        event_id: parseInt(eventId, 10),
-        skill_level: sl,
-        skill_level_max: slMax,
-        winner_name: winnerName,
-        winner_team: team,
-        winner_players: players,
-        runner_up_name: runner,
-        runner_up_players: runnerPlayers,
-        area_id: areaId ? parseInt(areaId, 10) : null,
-        runner_up_area_id: runnerAreaId ? parseInt(runnerAreaId, 10) : null,
-        trophy_photo_path: null,
-        runner_up_photo_path: null,
-        bracket_photo_paths: []
-      };
-      const created = await sb('POST', 'trophy_brackets', row, true);
-      bracketId = created[0].id;
-    }
-
     // Champion photo — PDF first page was pre-rendered on selection; use that blob as-is.
     if (trophyFile) {
       const trophyInput = document.getElementById('brk-trophy-file');
       const blob = trophyInput._pdfHighRes ? trophyInput._pdfHighRes : await resizeImage(trophyFile);
-      if (editId && trophyPath) await deleteStorageFile(trophyPath);
-      trophyPath = await uploadImage(blob, slug, bracketId, 'trophy');
+      const oldPath = trophyPath;
+      trophyPath = await upload(blob, 'trophy');
+      if (oldPath) stale.push(oldPath);
     }
 
     // Runner-up photo
     if (runnerupFile) {
       const runnerupInput = document.getElementById('brk-runnerup-file');
       const blob = runnerupInput._pdfHighRes ? runnerupInput._pdfHighRes : await resizeImage(runnerupFile);
-      if (editId && runnerUpPath) await deleteStorageFile(runnerUpPath);
-      runnerUpPath = await uploadImage(blob, slug, bracketId, 'runnerup');
+      const oldPath = runnerUpPath;
+      runnerUpPath = await upload(blob, 'runnerup');
+      if (oldPath) stale.push(oldPath);
     }
 
     // Bracket photos — iterate the composer state in order, uploading new files
@@ -1678,19 +1711,15 @@ async function saveBracket() {
       } else {
         // PDF pages arrive already at upload resolution — skip resize.
         const blob = entry.preProcessed ? entry.file : await resizeImage(entry.file);
-        const path = await uploadImage(blob, slug, bracketId, 'bracket' + (i + 1));
-        finalBracketPaths.push(path);
+        finalBracketPaths.push(await upload(blob, 'bracket' + (i + 1)));
       }
     }
 
-    // Delete storage files for any original paths the user removed
-    const removedPaths = originalBracketPaths.filter(p => !finalBracketPaths.includes(p));
-    for (const p of removedPaths) {
-      await deleteStorageFile(p);
-    }
+    // Original paths the user removed go once the row has stopped pointing at them
+    stale.push(...originalBracketPaths.filter(p => !finalBracketPaths.includes(p)));
 
     // Persist the row
-    const update = {
+    const fields = {
       skill_level: sl,
       skill_level_max: slMax,
       winner_name: winnerName,
@@ -1702,19 +1731,30 @@ async function saveBracket() {
       runner_up_area_id: runnerAreaId ? parseInt(runnerAreaId, 10) : null,
       trophy_photo_path: trophyPath,
       runner_up_photo_path: runnerUpPath,
-      bracket_photo_paths: finalBracketPaths,
-      updated_at: new Date().toISOString()
+      bracket_photo_paths: finalBracketPaths
     };
-    await sb('PATCH', 'trophy_brackets?id=eq.' + bracketId, update, true);
+    rowSent = true;
+    if (editId) {
+      const saved = await sb('PATCH', 'trophy_brackets?id=eq.' + parseInt(editId, 10), { ...fields, updated_at: new Date().toISOString() }, true);
+      if (!saved || !saved.length) throw new Error('that winner no longer exists');
+    } else {
+      await sb('POST', 'trophy_brackets', { ...fields, event_id: parseInt(eventId, 10) }, true);
+    }
+
+    // The row is safe. Removing replaced files is housekeeping: a failure only leaves a spare file.
+    for (const p of stale) await deleteStorageFile(p).catch(() => {});
 
     showStatus(editId ? 'Bracket updated.' : 'Bracket added.', 'ok');
     cancelBracketEdit();
     await loadBrackets(eventId);
   } catch (e) {
-    showStatus('Failed to save bracket: ' + e.message, 'err');
+    // Before the row was sent, nothing points at this attempt's files. After it, the
+    // row may have landed, so they stay: a spare file costs nothing, a broken photo does.
+    if (!rowSent) for (const p of uploaded) await deleteStorageFile(p).catch(() => {});
+    showStatus("Couldn't save. Check your signal and tap Save again. (" + e.message + ')', 'err');
   } finally {
     btn.disabled = false;
-    btn.textContent = editId ? 'Update Bracket' : 'Save Bracket';
+    btn.textContent = document.getElementById('brk-edit-id').value ? 'Update Bracket' : 'Save Bracket';
   }
 }
 
@@ -1756,9 +1796,19 @@ async function deleteBracket(id) {
         'Accept-Profile': SB_SCHEMA
       }
     });
+    if (r.status === 401 || r.status === 403) {
+      showStatus('Invalid admin key. Access denied.', 'err');
+      return;
+    }
     if (!r.ok) throw new Error('HTTP ' + r.status);
   } catch (e) {
-    showStatus('Invalid admin key. Access denied.', 'err');
+    // A dead spot or an outage is not a bad key. This message once hid the whole app being down.
+    showStatus("Can't reach the database (" + e.message + "). Check your signal and reload this page.", 'err');
+    return;
+  }
+  // The public key can read, so it passes the check above, and then every save would fail.
+  if (jwtRole(key) === 'anon') {
+    showStatus('This link has the public key, not the admin key.', 'err');
     return;
   }
 
@@ -1770,7 +1820,7 @@ async function deleteBracket(id) {
   try {
     await loadChallenges();
   } catch (e) {
-    showStatus('Failed to load challenges: ' + e.message, 'err');
+    showStatus('Failed to load challenges: ' + e.message + '. Reload this page to try again.', 'err');
   }
   // Load events and areas in parallel
   await Promise.all([loadEvents(), loadAreas()]);
