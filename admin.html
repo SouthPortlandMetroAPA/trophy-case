@@ -228,10 +228,19 @@
     .badge.gold { background: var(--gold); color: #000; }
 
     /* ---- Status line ---- */
+    /* Fixed: Save sits a long way below the top of the page on a phone, and a
+       message up there would never be seen. Tap to dismiss. */
     .status-line {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      z-index: 2000;
+      max-height: 40vh;
+      overflow: auto;
       padding: calc(var(--spacing) * 3);
       border-radius: var(--radius);
-      margin-bottom: calc(var(--spacing) * 3);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
       font-size: 0.9rem;
       display: none;
     }
@@ -457,7 +466,7 @@
 
   <div class="page">
     <!-- Status line — used globally -->
-    <div id="status" class="status-line"></div>
+    <div id="status" class="status-line" role="status" onclick="this.className='status-line'"></div>
 
     <!-- ==================== KEY GATE ==================== -->
     <div id="gate" class="key-gate">
@@ -481,6 +490,10 @@
         <div class="card">
           <h2>Add Event</h2>
           <div class="form-row">
+            <div class="form-group">
+              <label for="evt-challenge">Challenge</label>
+              <select id="evt-challenge" onchange="autoSlug()"></select>
+            </div>
             <div class="form-group">
               <label for="evt-name">Event Name</label>
               <input type="text" id="evt-name" placeholder="e.g. Singles" oninput="autoSlug()">
@@ -506,6 +519,7 @@
             <table class="table hidden" id="events-table">
               <thead>
                 <tr>
+                  <th>Challenge</th>
                   <th>Name</th>
                   <th>Slug</th>
                   <th>Sort</th>
@@ -652,7 +666,7 @@
     </div><!-- /admin -->
   </div><!-- /page -->
 
-  <div class="footer">Trophy Case Admin v0.10</div>
+  <div class="footer">Trophy Case Admin v0.11</div>
 
 <script>
 /* ============================================================
@@ -660,19 +674,27 @@
  *  Single-file admin for the APA NW Challenge Trophy Case.
  *
  *  Auth: ?key=SERVICE_ROLE_KEY in URL. Validated on load via
- *  a test query. Read operations use the anon key (SB_READ),
- *  write/delete operations use the service_role key (SB_WRITE).
+ *  a test query. Once signed in, every call uses that key (SB_WRITE),
+ *  reads included; the anon key (SB_READ) is only the signed-out fallback.
  *
- *  Tables: trophy_events, trophy_areas, trophy_brackets
+ *  Tables: trophy_challenges, trophy_events, trophy_areas, trophy_brackets
+ *  (schema trophycase). Every REST call must send the profile headers; without
+ *  them PostgREST looks in apa_core and returns 404 PGRST205, which read here as
+ *  "Invalid admin key". Guard: tools/claude/validate-trophycase.mjs.
+ *
+ *  Deploy: preprod/ → tools/claude/trophycase/SMOKETEST.md → Apps/shared/promote.sh.
  *  Storage bucket: trophy-case-photos (public)
  * ============================================================ */
 
+const APP_VERSION = '0.11';
 const SB_URL   = 'https://dqzbekoaysgaiqljueac.supabase.co';
+const SB_SCHEMA = 'trophycase';
 const SB_READ  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxemJla29heXNnYWlxbGp1ZWFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNzA5NzgsImV4cCI6MjA5MDc0Njk3OH0.cCdGxZ4zEFzU_r6lWSDeoNWG67Q4MSYCAtpds035dfU';
 let SB_WRITE   = ''; // set from URL ?key= param
 
 /* ---------- State ---------- */
-let eventsCache   = [];  // [{id, name, slug, sort_order, active}]
+let challengesCache = []; // trophy_challenges, newest first
+let eventsCache   = [];  // [{id, name, slug, sort_order, active, challenge_id}]
 let areasCache    = [];  // [{id, name, sort_order}]
 let bracketsCache = [];  // brackets for the currently selected event
 
@@ -692,6 +714,11 @@ let bracketPhotosState = [];
 
 /* ---------- Utilities ---------- */
 
+/** The role claim of a JWT, or '' if it isn't one */
+function jwtRole(j) {
+  try { return JSON.parse(atob(j.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).role || ''; } catch (e) { return ''; }
+}
+
 /** HTML-escape to prevent XSS */
 function esc(s) {
   if (s == null) return '';
@@ -706,21 +733,27 @@ function toSlug(s) {
 }
 
 /** Show status line */
+let _statusTimer = null;
 function showStatus(msg, type) {
   const el = document.getElementById('status');
+  clearTimeout(_statusTimer);   // an older "ok" timer must not clear this message
   el.textContent = msg;
   el.className = 'status-line shown ' + type;
-  if (type === 'ok') setTimeout(() => { el.className = 'status-line'; }, 4000);
+  if (type === 'ok') _statusTimer = setTimeout(() => { el.className = 'status-line'; }, 4000);
 }
 
 /** Supabase REST helper (read uses anon key, write uses service_role) */
 async function sb(method, path, body, useWrite) {
-  const key = useWrite ? SB_WRITE : SB_READ;
+  // The admin key for everything once signed in, reads included: the anon policy
+  // only shows active events, and admin has to list inactive ones to re-enable them.
+  const key = SB_WRITE || SB_READ;
   const opts = {
     method,
     headers: {
       'apikey': key,
       'Authorization': 'Bearer ' + key,
+      'Accept-Profile': SB_SCHEMA,
+      'Content-Profile': SB_SCHEMA,
       'Content-Type': 'application/json',
       'Prefer': method === 'POST' ? 'return=representation' : (method === 'PATCH' ? 'return=representation' : '')
     }
@@ -801,7 +834,7 @@ function ensurePdfJs() {
     _pdfJsPromise = import(PDFJS_URL).then(mod => {
       mod.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
       return mod;
-    });
+    }).catch(e => { _pdfJsPromise = null; throw e; });   // a dropped load can be retried
   }
   return _pdfJsPromise;
 }
@@ -1056,7 +1089,29 @@ async function onFileSelected(input, labelId, previewId) {
 /* ---------- Auto-slug for events ---------- */
 function autoSlug() {
   const name = document.getElementById('evt-name').value;
-  document.getElementById('evt-slug').value = toSlug(name);
+  const ch = challengesCache.find(c => String(c.id) === document.getElementById('evt-challenge').value);
+  // Slugs are unique across every challenge, so a new event's slug starts with its challenge's.
+  document.getElementById('evt-slug').value = name.trim() ? (ch ? ch.slug + '-' : '') + toSlug(name) : '';
+}
+
+/* ================================================================
+ *  CHALLENGES (seeded by SQL; see the migration in tools/claude/migrations)
+ * ================================================================ */
+async function loadChallenges() {
+  challengesCache = await sb('GET', 'trophy_challenges?select=*&order=start_date.desc');
+  document.getElementById('evt-challenge').innerHTML =
+    challengesCache.map(c => '<option value="' + c.id + '">' + esc(c.short_label) + '</option>').join('');
+}
+
+function challengeLabel(ev) {
+  const ch = challengesCache.find(c => c.id === ev.challenge_id);
+  return ch ? ch.short_label : '';
+}
+
+/** Events with the newest challenge first, in tab order within each challenge */
+function eventsByChallenge() {
+  const rank = new Map(challengesCache.map((c, i) => [c.id, i]));
+  return [...eventsCache].sort((a, b) => rank.get(a.challenge_id) - rank.get(b.challenge_id) || (a.sort_order || 0) - (b.sort_order || 0));
 }
 
 /* ================================================================
@@ -1091,8 +1146,9 @@ function renderEvents() {
   }
   table.classList.remove('hidden');
   empty.classList.add('hidden');
-  body.innerHTML = eventsCache.map(ev => `
+  body.innerHTML = eventsByChallenge().map(ev => `
     <tr>
+      <td>${esc(challengeLabel(ev))}</td>
       <td>${esc(ev.name)}</td>
       <td><code>${esc(ev.slug)}</code></td>
       <td><input type="number" class="sort-input" value="${ev.sort_order || 0}" onchange="updateEventSort(${ev.id}, this.value)"></td>
@@ -1117,11 +1173,14 @@ async function addEvent() {
   const name = document.getElementById('evt-name').value.trim();
   const slug = document.getElementById('evt-slug').value.trim() || toSlug(name);
   const hasSL = document.getElementById('evt-has-sl').checked;
+  const challengeId = Number(document.getElementById('evt-challenge').value);
   if (!name || !slug) return showStatus('Event name and slug are required.', 'err');
+  if (!challengeId) return showStatus('Pick a challenge for this event.', 'err');
   try {
     await sb('POST', 'trophy_events', {
       name, slug,
-      sort_order: eventsCache.length,
+      challenge_id: challengeId,
+      sort_order: eventsCache.filter(e => e.challenge_id === challengeId).length,
       active: true,
       has_skill_levels: hasSL
     }, true);
@@ -1173,7 +1232,9 @@ async function toggleEventActive(id, active) {
 }
 
 async function deleteEvent(id, name) {
-  if (!confirm('Delete event "' + name + '"? This will also delete all brackets for this event.')) return;
+  const delEv = eventsCache.find(e => e.id === id);
+  const delLabel = (delEv ? challengeLabel(delEv) + ' – ' : '') + name;
+  if (!confirm('Delete event "' + delLabel + '"? This also deletes all its winners and photos, for good.')) return;
   try {
     // First delete all brackets for this event (and their storage files)
     const brackets = await sb('GET', 'trophy_brackets?event_id=eq.' + id + '&select=id,trophy_photo_path,runner_up_photo_path,bracket_photo_paths');
@@ -1279,8 +1340,14 @@ async function deleteArea(id, name) {
 function populateBracketEventDropdown() {
   const sel = document.getElementById('brk-event');
   const current = sel.value;
+  // Both challenges have a "Singles". The label goes first in the option text as
+  // well as the group, so a phone's truncated select can't hide which one it is.
   sel.innerHTML = '<option value="">-- Select Event --</option>' +
-    eventsCache.map(ev => `<option value="${ev.id}" ${String(ev.id) === current ? 'selected' : ''}>${esc(ev.name)}</option>`).join('');
+    challengesCache.map(c => {
+      const opts = eventsByChallenge().filter(ev => ev.challenge_id === c.id).map(ev =>
+        `<option value="${ev.id}" ${String(ev.id) === current ? 'selected' : ''}>${esc(c.short_label)} – ${esc(ev.name)}</option>`).join('');
+      return opts ? `<optgroup label="${esc(c.short_label)}">${opts}</optgroup>` : '';
+    }).join('');
 }
 
 /** Populate the 1st + 2nd place area dropdowns in the bracket form */
@@ -1357,9 +1424,13 @@ function applyEventModeToBracketForm() {
   }
 }
 
+let bracketsLoadToken = 0;   // only the latest loadBrackets may render
 async function loadBrackets(eventId) {
   if (!eventId) eventId = document.getElementById('brk-event').value;
   if (!eventId) return;
+  // A slower earlier response must not paint another event's winners here: their
+  // Edit and Delete buttons would act on real rows under the wrong heading.
+  const token = ++bracketsLoadToken;
   const loading = document.getElementById('brackets-loading');
   const empty   = document.getElementById('brackets-empty');
   const list    = document.getElementById('brackets-list');
@@ -1371,12 +1442,15 @@ async function loadBrackets(eventId) {
     // from trophy_brackets to trophy_areas (area_id and runner_up_area_id),
     // so PostgREST requires disambiguation. Runner-up area is looked up
     // from areasCache in renderBrackets instead of double-embedding.
-    bracketsCache = await sb('GET', 'trophy_brackets?event_id=eq.' + eventId + '&select=*,trophy_areas!trophy_brackets_area_id_fkey(name),trophy_events(slug)&order=skill_level.asc.nullslast,id.asc');
+    const rows = await sb('GET', 'trophy_brackets?event_id=eq.' + eventId + '&select=*,trophy_areas!trophy_brackets_area_id_fkey(name),trophy_events(slug)&order=skill_level.asc.nullslast,id.asc');
+    if (token !== bracketsLoadToken) return;
+    bracketsCache = rows;
     renderBrackets();
   } catch (e) {
+    if (token !== bracketsLoadToken) return;
     showStatus('Failed to load brackets: ' + e.message, 'err');
   } finally {
-    loading.classList.add('hidden');
+    if (token === bracketsLoadToken) loading.classList.add('hidden');
   }
 }
 
@@ -1384,7 +1458,7 @@ function renderBrackets() {
   const list  = document.getElementById('brackets-list');
   const empty = document.getElementById('brackets-empty');
   const ev = eventsCache.find(e => String(e.id) === document.getElementById('brk-event').value);
-  document.getElementById('bracket-list-title').textContent = ev ? ev.name + ' Brackets' : 'Brackets';
+  document.getElementById('bracket-list-title').textContent = ev ? challengeLabel(ev) + ' – ' + ev.name + ' Brackets' : 'Brackets';
 
   if (!bracketsCache.length) {
     list.innerHTML = '';
@@ -1564,7 +1638,35 @@ async function saveBracket() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Saving...';
 
+  // Files first, the row last, old files only once the row no longer needs them.
+  // A venue's signal drops mid-save: players must never see a half-saved winner, a
+  // retry must not add a second one, and a failed replacement must leave the old
+  // photo in place. The row is what publishes, so it goes last.
+  const uploaded = [];       // this attempt's new files, removed if the save fails before the row
+  const stale = [];          // files to remove once the row stops pointing at them
+  let rowSent = false;       // past this point the row may have landed even if the call fails
+  // A new winner has no id until the row exists, so its files take their name from the clock.
+  const fileId = editId || ('new' + Date.now());
+  const upload = async (blob, type) => {
+    const path = await uploadImage(blob, slug, fileId, type);
+    uploaded.push(path);
+    return path;
+  };
+
   try {
+    // A save can land even though the phone never hears back. Catch the retry before
+    // it posts the same winner twice.
+    if (!editId) {
+      const same = await sb('GET', 'trophy_brackets?event_id=eq.' + parseInt(eventId, 10)
+        + '&winner_name=eq.' + encodeURIComponent(winnerName) + '&select=id');
+      if (same && same.length && !confirm('"' + winnerName + '" is already saved on this event. Add them again?')) {
+        showStatus('Nothing added. "' + winnerName + '" was already saved.', 'ok');
+        cancelBracketEdit();
+        await loadBrackets(eventId);
+        return;
+      }
+    }
+
     // Carry-forward state from the existing row (if editing)
     let trophyPath   = null;
     let runnerUpPath = null;
@@ -1581,42 +1683,22 @@ async function saveBracket() {
       }
     }
 
-    // For new brackets, insert the row first so we have an ID for path naming
-    let bracketId = editId;
-    if (!editId) {
-      const row = {
-        event_id: parseInt(eventId, 10),
-        skill_level: sl,
-        skill_level_max: slMax,
-        winner_name: winnerName,
-        winner_team: team,
-        winner_players: players,
-        runner_up_name: runner,
-        runner_up_players: runnerPlayers,
-        area_id: areaId ? parseInt(areaId, 10) : null,
-        runner_up_area_id: runnerAreaId ? parseInt(runnerAreaId, 10) : null,
-        trophy_photo_path: null,
-        runner_up_photo_path: null,
-        bracket_photo_paths: []
-      };
-      const created = await sb('POST', 'trophy_brackets', row, true);
-      bracketId = created[0].id;
-    }
-
     // Champion photo — PDF first page was pre-rendered on selection; use that blob as-is.
     if (trophyFile) {
       const trophyInput = document.getElementById('brk-trophy-file');
       const blob = trophyInput._pdfHighRes ? trophyInput._pdfHighRes : await resizeImage(trophyFile);
-      if (editId && trophyPath) await deleteStorageFile(trophyPath);
-      trophyPath = await uploadImage(blob, slug, bracketId, 'trophy');
+      const oldPath = trophyPath;
+      trophyPath = await upload(blob, 'trophy');
+      if (oldPath) stale.push(oldPath);
     }
 
     // Runner-up photo
     if (runnerupFile) {
       const runnerupInput = document.getElementById('brk-runnerup-file');
       const blob = runnerupInput._pdfHighRes ? runnerupInput._pdfHighRes : await resizeImage(runnerupFile);
-      if (editId && runnerUpPath) await deleteStorageFile(runnerUpPath);
-      runnerUpPath = await uploadImage(blob, slug, bracketId, 'runnerup');
+      const oldPath = runnerUpPath;
+      runnerUpPath = await upload(blob, 'runnerup');
+      if (oldPath) stale.push(oldPath);
     }
 
     // Bracket photos — iterate the composer state in order, uploading new files
@@ -1629,19 +1711,15 @@ async function saveBracket() {
       } else {
         // PDF pages arrive already at upload resolution — skip resize.
         const blob = entry.preProcessed ? entry.file : await resizeImage(entry.file);
-        const path = await uploadImage(blob, slug, bracketId, 'bracket' + (i + 1));
-        finalBracketPaths.push(path);
+        finalBracketPaths.push(await upload(blob, 'bracket' + (i + 1)));
       }
     }
 
-    // Delete storage files for any original paths the user removed
-    const removedPaths = originalBracketPaths.filter(p => !finalBracketPaths.includes(p));
-    for (const p of removedPaths) {
-      await deleteStorageFile(p);
-    }
+    // Original paths the user removed go once the row has stopped pointing at them
+    stale.push(...originalBracketPaths.filter(p => !finalBracketPaths.includes(p)));
 
     // Persist the row
-    const update = {
+    const fields = {
       skill_level: sl,
       skill_level_max: slMax,
       winner_name: winnerName,
@@ -1653,19 +1731,30 @@ async function saveBracket() {
       runner_up_area_id: runnerAreaId ? parseInt(runnerAreaId, 10) : null,
       trophy_photo_path: trophyPath,
       runner_up_photo_path: runnerUpPath,
-      bracket_photo_paths: finalBracketPaths,
-      updated_at: new Date().toISOString()
+      bracket_photo_paths: finalBracketPaths
     };
-    await sb('PATCH', 'trophy_brackets?id=eq.' + bracketId, update, true);
+    rowSent = true;
+    if (editId) {
+      const saved = await sb('PATCH', 'trophy_brackets?id=eq.' + parseInt(editId, 10), { ...fields, updated_at: new Date().toISOString() }, true);
+      if (!saved || !saved.length) throw new Error('that winner no longer exists');
+    } else {
+      await sb('POST', 'trophy_brackets', { ...fields, event_id: parseInt(eventId, 10) }, true);
+    }
+
+    // The row is safe. Removing replaced files is housekeeping: a failure only leaves a spare file.
+    for (const p of stale) await deleteStorageFile(p).catch(() => {});
 
     showStatus(editId ? 'Bracket updated.' : 'Bracket added.', 'ok');
     cancelBracketEdit();
     await loadBrackets(eventId);
   } catch (e) {
-    showStatus('Failed to save bracket: ' + e.message, 'err');
+    // Before the row was sent, nothing points at this attempt's files. After it, the
+    // row may have landed, so they stay: a spare file costs nothing, a broken photo does.
+    if (!rowSent) for (const p of uploaded) await deleteStorageFile(p).catch(() => {});
+    showStatus("Couldn't save. Check your signal and tap Save again. (" + e.message + ')', 'err');
   } finally {
     btn.disabled = false;
-    btn.textContent = editId ? 'Update Bracket' : 'Save Bracket';
+    btn.textContent = document.getElementById('brk-edit-id').value ? 'Update Bracket' : 'Save Bracket';
   }
 }
 
@@ -1703,12 +1792,23 @@ async function deleteBracket(id) {
     const r = await fetch(SB_URL + '/rest/v1/trophy_events?select=id&limit=1', {
       headers: {
         'apikey': key,
-        'Authorization': 'Bearer ' + key
+        'Authorization': 'Bearer ' + key,
+        'Accept-Profile': SB_SCHEMA
       }
     });
+    if (r.status === 401 || r.status === 403) {
+      showStatus('Invalid admin key. Access denied.', 'err');
+      return;
+    }
     if (!r.ok) throw new Error('HTTP ' + r.status);
   } catch (e) {
-    showStatus('Invalid admin key. Access denied.', 'err');
+    // A dead spot or an outage is not a bad key. This message once hid the whole app being down.
+    showStatus("Can't reach the database (" + e.message + "). Check your signal and reload this page.", 'err');
+    return;
+  }
+  // The public key can read, so it passes the check above, and then every save would fail.
+  if (jwtRole(key) === 'anon') {
+    showStatus('This link has the public key, not the admin key.', 'err');
     return;
   }
 
@@ -1716,6 +1816,12 @@ async function deleteBracket(id) {
   document.getElementById('gate').classList.add('hidden');
   document.getElementById('admin').classList.remove('hidden');
 
+  // Challenges first: the events list and the bracket dropdown group by them
+  try {
+    await loadChallenges();
+  } catch (e) {
+    showStatus('Failed to load challenges: ' + e.message + '. Reload this page to try again.', 'err');
+  }
   // Load events and areas in parallel
   await Promise.all([loadEvents(), loadAreas()]);
 })();
