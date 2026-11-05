@@ -1,0 +1,1334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!--
+  ============================================================================
+  Trophy Case — APA NW Challenge Winner Showcase (Standalone / GitHub Pages)
+  ============================================================================
+
+  PURPOSE:
+    Public-facing showcase page for APA NW Challenge event winners. Displays
+    champion cards grouped by event (tabs) and skill level (sections). Each
+    card shows a trophy photo, winner name, team info (for team events),
+    runner-up defeated, and league area. Bracket photos open in a lightbox.
+
+  ARCHITECTURE:
+    Pure static page. No backend proxy needed — reads directly from Supabase
+    REST API using the anon key. RLS policies allow public SELECT on all
+    trophy tables. Storage bucket is public for photo access.
+
+    Supabase REST (PostgREST) for data:
+      GET /rest/v1/trophy_events?active=eq.true&order=sort_order.asc
+      GET /rest/v1/trophy_brackets?select=*,trophy_areas(name)&event_id=eq.X&order=skill_level.asc
+
+    Supabase Storage for photos:
+      {SUPABASE_URL}/storage/v1/object/public/trophy-case-photos/{path}
+
+  HASH ROUTING:
+    URL hash maps to event slugs (#singles, #9-ball-2026-singles) or a
+    challenge slug (#9-ball-2026). An event slug also selects its challenge, so
+    old links to April's events keep working. Slugs are immutable.
+    Default: first event of the newest challenge.
+    Changing tabs updates the hash; loading with a hash selects that tab.
+
+  RESPONSIVE DESIGN:
+    - 16px base font (standalone standard)
+    - CSS @media queries: mobile (<768), tablet (768-1199), desktop (1200+)
+    - 1/2/3 column grid for winner cards
+    - Mobile-first CSS with min-width breakpoints
+    - 4px spacing grid, 48px min touch targets
+    - clamp() for fluid heading sizes
+
+  BRANDING:
+    Premium dark champion theme with gold (champion) + silver (runner-up)
+    accents. Hall-of-fame aesthetic. Dark navy background, gold/silver
+    text/borders/badges, warm cream body text.
+
+  DATA FLOW (v0.11):
+    Page load → fetch trophy_challenges + trophy_events + trophy_areas → pick
+    the challenge and event from the hash, else the newest challenge by
+    start_date → render switcher and tabs → fetch trophy_brackets for that
+    event → group by skill_level → render winner cards per group.
+
+  SCHEMA HEADER (do not remove):
+    Every REST call sends Accept-Profile: trophycase. The tables live in the
+    trophycase schema; without the header PostgREST looks in apa_core and
+    returns 404 PGRST205, and the page shows "Failed to load events". That
+    took this app down unnoticed. Guard: tools/claude/validate-trophycase.mjs.
+
+  DEPLOY:
+    preprod/ → tools/claude/trophycase/SMOKETEST.md → Apps/shared/promote.sh →
+    tools/claude/deploy-finisher.mjs (reads APP_VERSION from this page).
+
+  CARD LAYOUT (v0.4+):
+    Photos: single champion photo, or two-up champion + runner-up when
+    both exist (equal emphasis with labels). Runner-up name adopts a
+    second column in the body so 1st & 2nd place are equally surfaced.
+
+  LIGHTBOX (v0.4+):
+    Gallery viewer — opens with a single image (champion/runner-up
+    click) or an array of bracket photos ("View Brackets (N)" button).
+    Prev/next arrows + counter + keyboard (arrow keys) + touch swipe.
+    Close via X, click outside image, or Escape.
+
+  ============================================================================
+  -->
+  <title>Trophy Case — APA NW Challenge Champions</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    /* ── Reset & Variables ──────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --primary: #c2b280;
+      --primary-dark: #b5a574;
+      --bg: #0f0f1a;
+      --bg-card: #1a1a2e;
+      --bg-section: #12122a;
+      --text: #f0e6d3;
+      --text-muted: #8a8a9a;
+      --gold: #c2b280;
+      --gold-glow: rgba(194, 178, 128, 0.15);
+      --silver: #c0c0c0;               /* runner-up accent — equal weight to gold */
+      --silver-muted: #d6d6d6;
+      --border: #2a2a40;
+      --radius: 12px;
+      --shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    html { font-size: 16px; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100svh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .hidden { display: none !important; }
+
+    /* ── Header ─────────────────────────────────────────────────────── */
+    .site-header {
+      position: relative;
+      background: linear-gradient(135deg, #0a0a18 0%, #16163a 50%, #0f0f1a 100%);
+      padding: 48px 24px 64px;
+      text-align: center;
+    }
+
+    .site-header .admin-link {
+      position: absolute;
+      top: 12px;
+      right: 16px;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      text-decoration: none;
+      opacity: 0.5;
+      transition: opacity 0.2s;
+    }
+    .site-header .admin-link:hover { opacity: 1; }
+
+    .site-header h1 {
+      font-size: clamp(2rem, 1.2rem + 3vw, 3.5rem);
+      font-weight: 700;
+      color: var(--gold);
+      letter-spacing: 0.04em;
+      text-shadow: 0 2px 12px rgba(194, 178, 128, 0.3);
+    }
+
+    .site-header .subtitle {
+      font-size: clamp(0.875rem, 0.7rem + 0.6vw, 1.125rem);
+      color: var(--text-muted);
+      margin-top: 8px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    /* Gold wave divider at bottom of header */
+    .header-wave {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 32px;
+      overflow: hidden;
+    }
+    .header-wave svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ── Tab Bar ─────────────────────────────────────────────────────── */
+    .tab-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      padding: 16px 16px 12px;
+      background: var(--bg-section);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .tab-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 0.9375rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+    }
+    .tab-btn:hover {
+      border-color: var(--gold);
+      color: var(--text);
+    }
+    .tab-btn.active {
+      background: var(--gold);
+      color: #0f0f1a;
+      border-color: var(--gold);
+      font-weight: 600;
+    }
+
+    /* Challenge switcher: which Challenge the tabs below belong to. Underlined,
+       so it does not read as one more event tab. */
+    .challenge-bar {
+      display: flex;
+      justify-content: center;
+      gap: 4px;
+      padding: 8px 16px 0;
+      background: var(--bg-section);
+    }
+    .challenge-bar[hidden] { display: none; }
+    .challenge-btn {
+      flex: 1 1 0;
+      max-width: 260px;
+      min-height: 48px;
+      padding: 10px 8px;
+      background: transparent;
+      border: 0;
+      border-bottom: 3px solid transparent;
+      color: var(--text-muted);
+      font-size: clamp(0.875rem, 4.2vw, 1rem);
+      font-weight: 500;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .challenge-btn:hover { color: var(--text); }
+    .challenge-btn.active {
+      color: var(--gold);
+      border-bottom-color: var(--gold);
+      font-weight: 700;
+    }
+
+    /* ── Main Content ───────────────────────────────────────────────── */
+    .main-content {
+      flex: 1;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 24px 16px 48px;
+    }
+
+    /* ── Skill Level Section ────────────────────────────────────────── */
+    .sl-section {
+      margin-bottom: 48px;
+    }
+
+    .sl-heading {
+      font-size: clamp(1.25rem, 1rem + 1vw, 1.75rem);
+      font-weight: 600;
+      color: var(--gold);
+      padding-bottom: 8px;
+      margin-bottom: 24px;
+      border-bottom: 2px solid var(--gold);
+      display: inline-block;
+    }
+
+    /* ── Card Grid ──────────────────────────────────────────────────── */
+    .card-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 24px;
+    }
+
+    @media (min-width: 768px) {
+      .card-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (min-width: 1200px) {
+      .card-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+
+    /* ── Winner Card ────────────────────────────────────────────────── */
+    .winner-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      transition: border-color 0.3s, box-shadow 0.3s;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+
+    @media (hover: hover) {
+      .winner-card:hover {
+        border-color: var(--gold);
+        box-shadow: 0 6px 28px rgba(194, 178, 128, 0.2);
+      }
+    }
+
+    /* SL badge — top-right corner of card */
+    .sl-badge {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      background: var(--gold);
+      color: #0f0f1a;
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 6px;
+      z-index: 2;
+      line-height: 1;
+    }
+
+    /* Finisher sections (stacked). Used for both single-champion and
+       1st+2nd layouts. When both are present, each gets its own heading
+       (1st Place / 2nd Place) and its own gold / silver accent. No
+       overlay labels on photos — headings are text outside the image. */
+    .finisher-section {
+      background: var(--bg-card);
+      position: relative;
+    }
+    .finisher-section + .finisher-section {
+      border-top: 1px solid var(--border);
+    }
+
+    .finisher-section-heading {
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      padding: 14px 20px 6px;
+      line-height: 1.2;
+    }
+    .finisher-section.first  .finisher-section-heading { color: var(--gold); }
+    .finisher-section.second .finisher-section-heading { color: var(--silver-muted); }
+
+    .finisher-photo {
+      width: 100%;
+      background: #0a0a16;
+      border-bottom: 2px solid var(--gold);
+      position: relative;
+      overflow: hidden;
+    }
+    .finisher-photo.second { border-bottom-color: var(--silver); }
+    .finisher-photo[data-single-photo] { cursor: pointer; }
+    .finisher-photo img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+    .finisher-photo.no-photo-bg {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 140px;
+    }
+    .finisher-photo .no-photo {
+      color: var(--text-muted);
+      font-size: 3rem;
+    }
+
+    .finisher-details {
+      padding: 12px 20px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .finisher-details .name {
+      font-size: clamp(1.1rem, 1rem + 0.4vw, 1.35rem);
+      font-weight: 700;
+      line-height: 1.25;
+      word-break: break-word;
+    }
+    .finisher-section.first  .finisher-details .name { color: var(--gold); }
+    .finisher-section.second .finisher-details .name { color: var(--silver-muted); }
+
+    .team-name {
+      font-size: 0.9375rem;
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .player-list {
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .player-list .player-row {
+      display: block;
+    }
+
+    .finisher-section.second .area-badge {
+      border-color: var(--silver);
+      color: var(--silver);
+    }
+
+    /* Area badge */
+    .area-badge {
+      display: inline-block;
+      border: 1px solid var(--gold);
+      color: var(--gold);
+      font-size: 0.75rem;
+      font-weight: 500;
+      padding: 4px 12px;
+      border-radius: 20px;
+      line-height: 1;
+      align-self: flex-start;
+    }
+
+    /* View Bracket button */
+    .card-actions {
+      padding: 0 20px 20px;
+    }
+
+    .view-bracket-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: transparent;
+      border: 1px solid var(--gold);
+      color: var(--gold);
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s;
+      min-height: 48px;
+    }
+    .view-bracket-btn:hover {
+      background: var(--gold);
+      color: #0f0f1a;
+    }
+
+    /* ── Empty State ────────────────────────────────────────────────── */
+    .empty-state {
+      text-align: center;
+      padding: 80px 24px;
+      color: var(--text-muted);
+      font-size: 1.25rem;
+    }
+    .empty-state .trophy-icon {
+      font-size: 3rem;
+      display: block;
+      margin-bottom: 16px;
+    }
+
+    /* ── Loading State ──────────────────────────────────────────────── */
+    .loading {
+      text-align: center;
+      padding: 80px 24px;
+      color: var(--text-muted);
+      font-size: 1rem;
+    }
+
+    /* ── Lightbox ───────────────────────────────────────────────────── */
+    /* The image is absolutely positioned INSIDE this box and drawn at
+       its intrinsic (natural) resolution. A transform combines fit-to-
+       viewport scaling and user pinch-zoom into a single scale factor,
+       so the browser always rasterizes from the source bitmap. This is
+       deliberately NOT a flex-centered + max-width design — that design
+       makes the browser cache a downsampled texture and blurs zoom. */
+    .lightbox {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: rgba(0, 0, 0, 0.92);
+      overflow: hidden;
+    }
+
+    .lightbox img {
+      position: absolute;
+      top: 0;
+      left: 0;
+      border-radius: 8px;
+      box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+      /* Pinch-zoom implemented via pointer events + CSS transform.
+         touch-action:none tells the browser not to claim these gestures. */
+      touch-action: none;
+      transform-origin: 0 0;
+      /* NOTE: no will-change: transform. Forcing a compositor layer
+         causes the GPU texture to be rasterized at layout size; when
+         transform:scale() then zooms in, the browser upscales that
+         small cached texture instead of re-sampling from the high-res
+         bitmap, producing blurry text. Letting the browser rasterize
+         on the fly keeps pinch-zoom crisp at every zoom level. */
+      user-select: none;
+      -webkit-user-drag: none;
+      cursor: zoom-in;
+      image-rendering: -webkit-optimize-contrast;  /* nudge crisper text on upscale */
+    }
+    .lightbox.zoomed img { cursor: grab; }
+    .lightbox.zoomed img:active { cursor: grabbing; }
+
+    .lightbox-close {
+      position: absolute;
+      top: 16px;
+      right: 20px;
+      background: none;
+      border: none;
+      color: #fff;
+      font-size: 2rem;
+      cursor: pointer;
+      width: 48px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      transition: background 0.2s;
+      z-index: 2;
+    }
+    .lightbox-close:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    /* Prev/next nav arrows */
+    .lightbox-nav {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      background: rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.15);
+      color: #fff;
+      width: 56px;
+      height: 56px;
+      min-width: 48px;
+      min-height: 48px;
+      border-radius: 50%;
+      font-size: 1.75rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s, border-color 0.2s;
+      z-index: 2;
+    }
+    .lightbox-nav:hover {
+      background: rgba(0,0,0,0.8);
+      border-color: var(--gold);
+    }
+    .lightbox-nav.prev { left: 16px; }
+    .lightbox-nav.next { right: 16px; }
+    @media (max-width: 600px) {
+      .lightbox-nav { width: 48px; height: 48px; font-size: 1.5rem; }
+      .lightbox-nav.prev { left: 8px; }
+      .lightbox-nav.next { right: 8px; }
+    }
+
+    /* Counter in top-left */
+    .lightbox-counter {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      color: var(--gold);
+      font-size: 0.875rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      background: rgba(0,0,0,0.55);
+      padding: 6px 12px;
+      border-radius: 20px;
+      z-index: 2;
+    }
+
+    .lightbox.single-image .lightbox-nav,
+    .lightbox.single-image .lightbox-counter { display: none; }
+
+    /* ── Footer ─────────────────────────────────────────────────────── */
+    .site-footer {
+      text-align: center;
+      padding: 24px 16px;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ═══ Header ═══ -->
+  <header class="site-header">
+    <a href="admin.html" class="admin-link">Admin</a>
+    <h1>Trophy Case</h1>
+    <p class="subtitle" id="subtitle">APA NW Challenge Champions</p>
+    <div class="header-wave">
+      <svg viewBox="0 0 1440 32" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M0,16 C360,32 720,0 1080,16 C1260,24 1380,20 1440,16 L1440,32 L0,32 Z"
+              fill="var(--gold)" opacity="0.15"/>
+        <path d="M0,24 C480,8 960,32 1440,20 L1440,32 L0,32 Z"
+              fill="var(--gold)" opacity="0.08"/>
+      </svg>
+    </div>
+  </header>
+
+  <!-- ═══ Challenge switcher + event tabs ═══ -->
+  <nav class="challenge-bar" id="challengeBar" aria-label="Challenge" hidden>
+    <!-- Populated by JS -->
+  </nav>
+  <nav class="tab-bar" id="tabBar">
+    <!-- Populated by JS -->
+  </nav>
+
+  <!-- ═══ Content ═══ -->
+  <main class="main-content" id="content">
+    <div class="loading">Loading champions...</div>
+  </main>
+
+  <!-- ═══ Lightbox (hidden by default) ═══ -->
+  <div class="lightbox hidden" id="lightbox">
+    <button class="lightbox-close" aria-label="Close" id="lightboxClose">&times;</button>
+    <button class="lightbox-nav prev" aria-label="Previous photo" id="lightboxPrev">&#10094;</button>
+    <button class="lightbox-nav next" aria-label="Next photo" id="lightboxNext">&#10095;</button>
+    <div class="lightbox-counter" id="lightboxCounter"></div>
+    <img src="" alt="" id="lightboxImg">
+  </div>
+
+  <!-- ═══ Footer ═══ -->
+  <footer class="site-footer">
+    APA NW Challenges &mdash; Trophy Case v0.11
+  </footer>
+
+  <script>
+    /* ══════════════════════════════════════════════════════════════════
+       Trophy Case — Client-Side Logic
+       ══════════════════════════════════════════════════════════════════
+       Fetches events & brackets from Supabase REST API. Renders tabs
+       and winner cards. Manages hash routing and lightbox overlay.
+       ════════════════════════════════════════════════════════════════ */
+
+    // ── Config ───────────────────────────────────────────────────────
+    const APP_VERSION = '0.11';
+    const SUPABASE_URL = 'https://dqzbekoaysgaiqljueac.supabase.co';
+    const SUPABASE_SCHEMA = 'trophycase';
+    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxemJla29heXNnYWlxbGp1ZWFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNzA5NzgsImV4cCI6MjA5MDc0Njk3OH0.cCdGxZ4zEFzU_r6lWSDeoNWG67Q4MSYCAtpds035dfU';
+    const STORAGE_BASE = SUPABASE_URL + '/storage/v1/object/public/trophy-case-photos/';
+
+    // ── State ────────────────────────────────────────────────────────
+    let challenges = [];             // trophy_challenges with something to show, newest first
+    let allEvents = [];              // active trophy_events of every challenge
+    let events = [];                 // the selected challenge's events: what the tabs show
+    let activeChallengeId = null;    // currently selected challenge id
+    let activeEventId = null;        // currently selected event id
+    let bracketLoadToken = 0;        // only the latest loadBrackets may render
+    let areasById = new Map();       // id → area name, populated once at init
+
+    // ── DOM refs ─────────────────────────────────────────────────────
+    const challengeBar    = document.getElementById('challengeBar');
+    const tabBar          = document.getElementById('tabBar');
+    const content         = document.getElementById('content');
+    const lightbox        = document.getElementById('lightbox');
+    const lightboxImg     = document.getElementById('lightboxImg');
+    const lightboxCounter = document.getElementById('lightboxCounter');
+    const lightboxPrev    = document.getElementById('lightboxPrev');
+    const lightboxNext    = document.getElementById('lightboxNext');
+    const lightboxClose   = document.getElementById('lightboxClose');
+
+    // ── Lightbox gallery state ───────────────────────────────────────
+    let lightboxImages = [];  // array of image URLs currently on display
+    let lightboxIndex  = 0;   // current index into lightboxImages
+
+    // ── Utility: HTML-escape (text content only; doesn't escape quotes) ──
+    function esc(str) {
+      if (str == null) return '';
+      const el = document.createElement('span');
+      el.textContent = String(str);
+      return el.innerHTML;
+    }
+
+    // ── Utility: HTML attribute value escape ─────────────────────────
+    // esc() only escapes &<>; it does NOT escape quotes, so values that
+    // contain " or ' (e.g. JSON.stringify output) would prematurely close
+    // a double-quoted attribute. Use this when interpolating into
+    // attr="..." contexts.
+    function escAttr(str) {
+      if (str == null) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    // ── Supabase REST helper ─────────────────────────────────────────
+    async function supaGet(path) {
+      const resp = await fetch(SUPABASE_URL + '/rest/v1/' + path, {
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': 'Bearer ' + SUPABASE_KEY,
+          'Accept-Profile': SUPABASE_SCHEMA
+        }
+      });
+      if (!resp.ok) throw new Error('Supabase ' + resp.status + ': ' + (await resp.text()));
+      return resp.json();
+    }
+
+    // ── Fetch Events + Areas & Render Tabs ───────────────────────────
+    // Areas are fetched once at init and cached by id so cards can show
+    // per-finisher area badges without a PostgREST double-embed dance.
+    async function loadEvents() {
+      try {
+        const [chRows, evRows, areaRows] = await Promise.all([
+          supaGet('trophy_challenges?active=eq.true&select=id,name,slug,short_label,start_date&order=start_date.desc'),
+          supaGet('trophy_events?active=eq.true&select=id,name,slug,has_skill_levels,challenge_id&order=sort_order.asc'),
+          supaGet('trophy_areas?select=id,name')
+        ]);
+        // A challenge with no active event has nothing to show; an event of a hidden challenge must not surface.
+        challenges = chRows.filter(c => evRows.some(e => e.challenge_id === c.id));
+        allEvents = evRows.filter(e => challenges.some(c => c.id === e.challenge_id));
+        areasById = new Map((areaRows || []).map(a => [a.id, a.name]));
+      } catch (err) {
+        content.innerHTML = '<div class="empty-state">Failed to load events. Please try again later.</div>';
+        console.error('loadEvents error:', err);
+        return;
+      }
+
+      if (!allEvents.length) {
+        tabBar.innerHTML = '';
+        content.innerHTML = '<div class="empty-state"><span class="trophy-icon">\u{1F3C6}</span>Champions coming soon...</div>';
+        return;
+      }
+
+      routeFromHash();
+    }
+
+    // #<event-slug> opens that event in its own challenge, #<challenge-slug> opens
+    // a challenge, and anything else opens the newest challenge.
+    function routeFromHash() {
+      const hash = location.hash.replace('#', '');
+      const ev = allEvents.find(e => e.slug === hash);
+      if (ev) { selectChallenge(ev.challenge_id, ev.id); return; }
+      const ch = challenges.find(c => c.slug === hash);
+      selectChallenge((ch || challenges[0]).id);
+    }
+
+    function selectChallenge(challengeId, eventId) {
+      activeChallengeId = challengeId;
+      events = allEvents.filter(e => e.challenge_id === challengeId);
+      const ch = challenges.find(c => c.id === challengeId);
+      document.getElementById('subtitle').textContent = ch.name + ' Champions';
+      document.title = 'Trophy Case — ' + ch.name + ' Champions';
+      renderChallengeBar();
+      renderTabs();
+      selectEvent(eventId || events[0].id);
+    }
+
+    function renderChallengeBar() {
+      challengeBar.hidden = challenges.length < 2;   // one challenge: nothing to switch
+      challengeBar.innerHTML = challenges.map(c => {
+        const on = c.id === activeChallengeId;
+        return '<button class="challenge-btn' + (on ? ' active' : '') + '" aria-pressed="' + on + '" data-id="' + c.id + '">'
+          + esc(c.short_label) + '</button>';
+      }).join('');
+    }
+
+    function renderTabs() {
+      tabBar.innerHTML = events.map(ev =>
+        '<button class="tab-btn" data-id="' + ev.id + '" data-slug="' + esc(ev.slug) + '">'
+        + esc(ev.name) + '</button>'
+      ).join('');
+    }
+
+    // One delegated listener each: the bars re-render on every challenge switch.
+    tabBar.addEventListener('click', function(e) {
+      const btn = e.target.closest('.tab-btn');
+      if (!btn) return;
+      selectEvent(Number(btn.dataset.id));
+    });
+    challengeBar.addEventListener('click', function(e) {
+      const btn = e.target.closest('.challenge-btn');
+      if (!btn) return;
+      const id = Number(btn.dataset.id);
+      if (id !== activeChallengeId) selectChallenge(id);
+    });
+
+    // ── Select an Event Tab ──────────────────────────────────────────
+    function selectEvent(eventId) {
+      activeEventId = eventId;
+
+      // Update tab active states
+      tabBar.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.toggle('active', Number(btn.dataset.id) === eventId);
+      });
+
+      // Update URL hash
+      const ev = events.find(e => e.id === eventId);
+      if (ev) {
+        history.replaceState(null, '', '#' + ev.slug);
+      }
+
+      loadBrackets(eventId);
+    }
+
+    // ── Fetch & Render Brackets ──────────────────────────────────────
+    async function loadBrackets(eventId) {
+      content.innerHTML = '<div class="loading">Loading champions...</div>';
+
+      // A slower earlier request must never paint its winners under the tab
+      // picked since, which would show one Challenge's winners under another.
+      const token = ++bracketLoadToken;
+
+      let brackets;
+      try {
+        brackets = await supaGet(
+          'trophy_brackets?select=*'
+          + '&event_id=eq.' + eventId
+          + '&order=skill_level.asc.nullslast,id.asc'
+        );
+        if (token !== bracketLoadToken) return;
+      } catch (err) {
+        if (token !== bracketLoadToken) return;
+        content.innerHTML = '<div class="empty-state">Failed to load brackets. Please try again later.</div>';
+        console.error('loadBrackets error:', err);
+        return;
+      }
+
+      if (!brackets.length) {
+        content.innerHTML = '<div class="empty-state"><span class="trophy-icon">\u{1F3C6}</span>Champions coming soon...</div>';
+        return;
+      }
+
+      // Is this a no-SL event (e.g. Scotch Doubles / Tournament of the Pool Gods)?
+      const activeEv = events.find(e => e.id === activeEventId);
+      const hasSL = !activeEv || activeEv.has_skill_levels !== false;
+
+      let html = '';
+      if (!hasSL) {
+        // Flat grid — no SL section headings, no SL badges on cards
+        html += '<section class="sl-section">';
+        html += '<div class="card-grid">';
+        for (const b of brackets) {
+          html += renderCard(b, null);
+        }
+        html += '</div></section>';
+      } else {
+        // Group by skill_level display key (supports ranges like "2-3")
+        const groups = new Map();
+        for (const b of brackets) {
+          const slKey = b.skill_level_max
+            ? b.skill_level + '-' + b.skill_level_max
+            : String(b.skill_level);
+          if (!groups.has(slKey)) groups.set(slKey, []);
+          groups.get(slKey).push(b);
+        }
+        for (const [slKey, items] of groups) {
+          html += '<section class="sl-section">';
+          html += '<h2 class="sl-heading">Skill Level ' + esc(slKey) + '</h2>';
+          html += '<div class="card-grid">';
+          for (const b of items) {
+            html += renderCard(b, slKey);
+          }
+          html += '</div></section>';
+        }
+      }
+
+      content.innerHTML = html;
+
+      // Attach bracket-view listeners (opens gallery lightbox with full array)
+      content.querySelectorAll('[data-bracket-photos]').forEach(btn => {
+        btn.addEventListener('click', function() {
+          let paths;
+          try { paths = JSON.parse(this.dataset.bracketPhotos); } catch { paths = []; }
+          if (paths.length) openLightbox(paths, 0);
+        });
+      });
+
+      // Champion / runner-up photos also open the lightbox (single-image mode)
+      content.querySelectorAll('[data-single-photo]').forEach(el => {
+        el.addEventListener('click', function() {
+          openLightbox([this.dataset.singlePhoto], 0);
+        });
+      });
+    }
+
+    // ── Render a Single Winner Card ──────────────────────────────────
+    // Stacked layout: each finisher (1st, 2nd) is its own section with
+    // its own heading, photo, details, and league-area badge. Single-
+    // champion events get a single "1st Place" section with no heading
+    // (to stay clean).
+    function renderCard(b, sl) {
+      const hasRunnerUp     = !!(b.runner_up_name || b.runner_up_photo_path);
+      const bracketPaths    = Array.isArray(b.bracket_photo_paths) ? b.bracket_photo_paths : [];
+      const bracketUrls     = bracketPaths.filter(Boolean).map(p => STORAGE_BASE + p);
+
+      const firstAreaName  = b.area_id           ? (areasById.get(b.area_id)           || null) : null;
+      const secondAreaName = b.runner_up_area_id ? (areasById.get(b.runner_up_area_id) || null) : null;
+
+      /**
+       * Build one finisher section (1st or 2nd place). kind is 'first' or
+       * 'second'. Photo is optional; when absent we show a trophy
+       * placeholder background. Heading is omitted when includeHeading
+       * is false (used for the single-champion fallback).
+       */
+      /**
+       * Parse a free-form player roster string into one name per entry.
+       *
+       * Admins have entered this field in every conceivable way, so we
+       * handle four separator styles and then fall back to a word-pair
+       * heuristic:
+       *   1. Explicit separators — comma, semicolon, newline, " and ",
+       *      " & " — win first if present. This is the admin's signal.
+       *   2. If the input is one run of words (no explicit separator)
+       *      AND the word count is even AND ≥ 4, assume "First Last First
+       *      Last ..." and split into consecutive pairs. Handles the
+       *      common Scotch Doubles case of typing two player names with
+       *      only spaces between them.
+       *   3. Anything else (odd word count, 2-word single name, empty):
+       *      return as-is so it at least renders readable.
+       */
+      function splitPlayers(raw) {
+        if (!raw) return [];
+        const normalized = String(raw)
+          .replace(/\s+and\s+/gi, ',')
+          .replace(/\s*&\s*/g, ',')
+          .replace(/[\n;]+/g, ',');
+        let parts = normalized.split(',').map(s => s.trim()).filter(Boolean);
+        if (parts.length === 1) {
+          const words = parts[0].split(/\s+/).filter(Boolean);
+          if (words.length >= 4 && words.length % 2 === 0) {
+            parts = [];
+            for (let i = 0; i < words.length; i += 2) {
+              parts.push(words[i] + ' ' + words[i + 1]);
+            }
+          }
+        }
+        return parts;
+      }
+
+      function finisherSection(opts) {
+        const { kind, personName, photoPath, teamLabel, players, areaLabel, includeHeading } = opts;
+        const headingText = kind === 'first' ? '1st Place' : '2nd Place';
+        const heading = includeHeading
+          ? '<div class="finisher-section-heading">' + headingText + '</div>'
+          : '';
+
+        // Photo block
+        let photoHtml;
+        if (photoPath) {
+          const url = STORAGE_BASE + photoPath;
+          photoHtml = '<div class="finisher-photo ' + kind + '" data-single-photo="' + escAttr(url) + '">'
+            + '<img src="' + escAttr(url) + '" alt="' + esc(headingText + (personName ? ': ' + personName : '')) + '" loading="lazy">'
+            + '</div>';
+        } else {
+          photoHtml = '<div class="finisher-photo ' + kind + ' no-photo-bg">'
+            + '<span class="no-photo">\u{1F3C6}</span>'
+            + '</div>';
+        }
+
+        // Details block
+        let detailsHtml = '<div class="finisher-details">';
+        if (personName) detailsHtml += '<div class="name">' + esc(personName) + '</div>';
+        if (teamLabel)  detailsHtml += '<div class="team-name">' + esc(teamLabel) + '</div>';
+        if (players) {
+          const names = splitPlayers(players).map(esc);
+          if (names.length) detailsHtml += '<div class="player-list">' + names.map(n => '<span class="player-row">' + n + '</span>').join('') + '</div>';
+        }
+        if (areaLabel)  detailsHtml += '<span class="area-badge">' + esc(areaLabel) + '</span>';
+        detailsHtml += '</div>';
+
+        return '<section class="finisher-section ' + kind + '">'
+          + heading
+          + photoHtml
+          + detailsHtml
+          + '</section>';
+      }
+
+      let bodyHtml;
+      if (hasRunnerUp) {
+        bodyHtml =
+          finisherSection({
+            kind: 'first',
+            personName: b.winner_name,
+            photoPath: b.trophy_photo_path,
+            teamLabel: b.winner_team,
+            players: b.winner_players,
+            areaLabel: firstAreaName,
+            includeHeading: true
+          })
+          + finisherSection({
+            kind: 'second',
+            personName: b.runner_up_name,
+            photoPath: b.runner_up_photo_path,
+            teamLabel: null,
+            players: b.runner_up_players,
+            areaLabel: secondAreaName,
+            includeHeading: true
+          });
+      } else {
+        // Single champion — clean layout, no heading text so the card
+        // stays uncluttered (there's nothing to contrast against).
+        bodyHtml = finisherSection({
+          kind: 'first',
+          personName: b.winner_name,
+          photoPath: b.trophy_photo_path,
+          teamLabel: b.winner_team,
+          players: b.winner_players,
+          areaLabel: firstAreaName,
+          includeHeading: false
+        });
+      }
+
+      // ── View-bracket(s) button — proper attribute escape for the JSON
+      // payload so embedded quotes don't close the attribute early. ──
+      let bracketHtml = '';
+      if (bracketUrls.length) {
+        const countSuffix = bracketUrls.length > 1 ? ' (' + bracketUrls.length + ')' : '';
+        const label = bracketUrls.length > 1 ? 'View Brackets' : 'View Bracket';
+        const payload = escAttr(JSON.stringify(bracketUrls));
+        bracketHtml = '<div class="card-actions">'
+          + '<button class="view-bracket-btn" data-bracket-photos="' + payload + '">'
+          + '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="14" height="14" rx="2"/><path d="M1 6h14M6 1v14"/></svg>'
+          + label + countSuffix
+        + '</button></div>';
+      }
+
+      // SL badge only for events that use skill levels.
+      const slBadgeHtml = (sl != null && sl !== '')
+        ? '<span class="sl-badge">SL ' + esc(String(sl)) + '</span>'
+        : '';
+
+      return '<article class="winner-card">'
+        + slBadgeHtml
+        + bodyHtml
+        + bracketHtml
+      + '</article>';
+    }
+
+    // ── Lightbox (multi-image gallery) ───────────────────────────────
+    // openLightbox takes an array of URLs and an optional start index. If
+    // only one image is supplied, nav arrows and the counter are hidden
+    // (single-image mode).
+    function openLightbox(paths, startIdx) {
+      lightboxImages = Array.isArray(paths) ? paths.filter(Boolean) : [paths].filter(Boolean);
+      if (!lightboxImages.length) return;
+      lightboxIndex = Math.max(0, Math.min(startIdx || 0, lightboxImages.length - 1));
+      updateLightbox();
+      lightbox.classList.remove('hidden');
+      lightbox.classList.toggle('single-image', lightboxImages.length <= 1);
+      document.body.style.overflow = 'hidden';
+    }
+
+    function updateLightbox() {
+      const src = lightboxImages[lightboxIndex];
+      lightboxImg.alt = 'Photo ' + (lightboxIndex + 1) + ' of ' + lightboxImages.length;
+      lightboxCounter.textContent = (lightboxIndex + 1) + ' / ' + lightboxImages.length;
+      // Hide while swapping sources so the prior image doesn't briefly
+      // render at its (now-wrong) transform before the new one loads.
+      lightboxImg.style.visibility = 'hidden';
+      lightboxImg.onload = function handleLoad() {
+        lightboxImg.onload = null;
+        lightboxImg.style.visibility = 'visible';
+        // naturalWidth/Height are available now → compute a real fit.
+        resetZoom();
+      };
+      lightboxImg.src = src || '';
+      // Cached images may not fire load on some browsers; kick once if ready.
+      if (lightboxImg.complete && lightboxImg.naturalWidth > 0) {
+        lightboxImg.onload && lightboxImg.onload();
+      }
+    }
+
+    function closeLightbox() {
+      lightbox.classList.add('hidden');
+      lightboxImg.src = '';
+      lightboxImages = [];
+      lightboxIndex = 0;
+      document.body.style.overflow = '';
+      resetZoom();
+    }
+
+    function lightboxPrevImg() {
+      if (lightboxImages.length <= 1) return;
+      lightboxIndex = (lightboxIndex - 1 + lightboxImages.length) % lightboxImages.length;
+      updateLightbox();
+    }
+
+    function lightboxNextImg() {
+      if (lightboxImages.length <= 1) return;
+      lightboxIndex = (lightboxIndex + 1) % lightboxImages.length;
+      updateLightbox();
+    }
+
+    // Close / nav buttons
+    lightboxClose.addEventListener('click', closeLightbox);
+    lightboxPrev.addEventListener('click', function(e) { e.stopPropagation(); lightboxPrevImg(); });
+    lightboxNext.addEventListener('click', function(e) { e.stopPropagation(); lightboxNextImg(); });
+
+    // Click outside image (or on backdrop) closes — but only at rest zoom,
+    // so a pinch-pan that releases on the backdrop doesn't accidentally close.
+    lightbox.addEventListener('click', function(e) {
+      if (e.target === lightbox && zoom.scale <= zoom.fitScale * 1.001) closeLightbox();
+    });
+
+    // Keyboard: Escape closes, Arrow keys navigate
+    document.addEventListener('keydown', function(e) {
+      if (lightbox.classList.contains('hidden')) return;
+      if (e.key === 'Escape') closeLightbox();
+      else if (e.key === 'ArrowLeft')  lightboxPrevImg();
+      else if (e.key === 'ArrowRight') lightboxNextImg();
+    });
+
+    /* ════════════════════════════════════════════════════════════════
+       Pinch-zoom + pan on the lightbox image.
+
+       Why this shape: the image is rendered at its intrinsic size and
+       positioned absolutely; a single CSS transform handles BOTH fit-
+       to-viewport scaling and user zoom. Keeping both in one transform
+       means every zoom level rasterizes from the full-resolution source
+       bitmap instead of from a compositor-cached downsample, so pinch-
+       zoomed bracket text stays crisp.
+
+       State:
+         zoom.fitScale  scale at which the natural image fits the lightbox
+         zoom.scale     current CSS scale factor (≥ fitScale, ≤ fitScale*MAX_ZOOM_MULT)
+         zoom.tx, ty    current translation of the image (CSS pixels)
+       Gestures:
+         - Two pointers  → pinch-zoom anchored at the midpoint.
+         - One pointer + scale>fit → pan (clamped to keep image onscreen).
+         - Double-tap / double-click → toggle fit ⇄ fit*2.5.
+         - Single-finger swipe at rest zoom → prev/next.
+         - Pinch-out past fit snaps back to fit on release.
+       ════════════════════════════════════════════════════════════════ */
+    const MAX_ZOOM_MULT = 6;       // highest scale = fitScale × 6
+    const DOUBLE_TAP_MS = 280;
+    const DOUBLE_TAP_ZOOM = 2.5;   // double-tap zooms to fitScale × 2.5
+    const zoom = { scale: 1, tx: 0, ty: 0, fitScale: 1 };
+    const pointers = new Map();  // id → { x, y }
+    let pinchStart = null;        // {distance, midpoint, scale, tx, ty} at gesture start
+    let panStart   = null;        // {pointerX, pointerY, tx, ty} at drag start
+    let lastTapAt  = 0;
+
+    function viewportSize() {
+      return { w: lightbox.clientWidth, h: lightbox.clientHeight };
+    }
+
+    /** Recalculate fitScale from the currently-loaded image + viewport. */
+    function computeFit() {
+      const nw = lightboxImg.naturalWidth;
+      const nh = lightboxImg.naturalHeight;
+      if (!nw || !nh) { zoom.fitScale = 1; return; }
+      const { w, h } = viewportSize();
+      // Cap at 1 so a small source isn't blown up just to fill screen.
+      zoom.fitScale = Math.min(w / nw, h / nh, 1);
+    }
+
+    /** Clamp tx/ty so the scaled image stays inside the viewport
+     *  along any axis where it's larger than the viewport, and is
+     *  perfectly centered along any axis where it's smaller. */
+    function clampPan() {
+      const nw = lightboxImg.naturalWidth * zoom.scale;
+      const nh = lightboxImg.naturalHeight * zoom.scale;
+      const { w, h } = viewportSize();
+      if (nw <= w) {
+        zoom.tx = (w - nw) / 2;
+      } else {
+        if (zoom.tx > 0) zoom.tx = 0;
+        if (zoom.tx + nw < w) zoom.tx = w - nw;
+      }
+      if (nh <= h) {
+        zoom.ty = (h - nh) / 2;
+      } else {
+        if (zoom.ty > 0) zoom.ty = 0;
+        if (zoom.ty + nh < h) zoom.ty = h - nh;
+      }
+    }
+
+    function applyTransform() {
+      lightboxImg.style.transform =
+        'translate(' + zoom.tx + 'px, ' + zoom.ty + 'px) scale(' + zoom.scale + ')';
+      lightbox.classList.toggle('zoomed', zoom.scale > zoom.fitScale * 1.001);
+    }
+
+    /** Called after an image loads or the viewport resizes: recompute
+     *  fitScale and center the image at its fit-size transform. */
+    function resetZoom() {
+      computeFit();
+      zoom.scale = zoom.fitScale;
+      // Center the scaled image in the viewport.
+      const nw = lightboxImg.naturalWidth || 0;
+      const nh = lightboxImg.naturalHeight || 0;
+      const { w, h } = viewportSize();
+      zoom.tx = (w - nw * zoom.scale) / 2;
+      zoom.ty = (h - nh * zoom.scale) / 2;
+      pointers.clear();
+      pinchStart = null;
+      panStart = null;
+      applyTransform();
+    }
+
+    /** Zoom to a target CSS scale, anchored at viewport point (px, py).
+     *  Target is clamped to [fitScale, fitScale * MAX_ZOOM_MULT]. */
+    function zoomAtPoint(targetScale, px, py) {
+      const minS = zoom.fitScale;
+      const maxS = zoom.fitScale * MAX_ZOOM_MULT;
+      targetScale = Math.max(minS, Math.min(maxS, targetScale));
+      // Image-local coords (i.e. the source-bitmap pixel) under the anchor.
+      const lx = (px - zoom.tx) / zoom.scale;
+      const ly = (py - zoom.ty) / zoom.scale;
+      zoom.tx = px - lx * targetScale;
+      zoom.ty = py - ly * targetScale;
+      zoom.scale = targetScale;
+      // Snap to fit and recenter when we're essentially back at rest.
+      if (Math.abs(zoom.scale - zoom.fitScale) < 0.002) {
+        zoom.scale = zoom.fitScale;
+        const nw = lightboxImg.naturalWidth || 0;
+        const nh = lightboxImg.naturalHeight || 0;
+        const { w, h } = viewportSize();
+        zoom.tx = (w - nw * zoom.scale) / 2;
+        zoom.ty = (h - nh * zoom.scale) / 2;
+      } else {
+        clampPan();
+      }
+      applyTransform();
+    }
+
+    lightboxImg.addEventListener('pointerdown', function(e) {
+      // Double-tap/click → toggle zoom at the tap point.
+      const now = Date.now();
+      const isDoubleTap = (now - lastTapAt) < DOUBLE_TAP_MS && pointers.size === 0;
+      lastTapAt = now;
+
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      lightboxImg.setPointerCapture(e.pointerId);
+
+      if (isDoubleTap) {
+        const atRest = zoom.scale <= zoom.fitScale * 1.001;
+        const target = atRest ? zoom.fitScale * DOUBLE_TAP_ZOOM : zoom.fitScale;
+        zoomAtPoint(target, e.clientX, e.clientY);
+        e.preventDefault();
+        return;
+      }
+
+      if (pointers.size === 2) {
+        const [a, b] = [...pointers.values()];
+        pinchStart = {
+          distance: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+          midpoint: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+          scale: zoom.scale,
+          tx: zoom.tx,
+          ty: zoom.ty
+        };
+        panStart = null;
+      } else if (pointers.size === 1 && zoom.scale > zoom.fitScale * 1.001) {
+        panStart = { pointerX: e.clientX, pointerY: e.clientY, tx: zoom.tx, ty: zoom.ty };
+      }
+      e.preventDefault();
+    });
+
+    lightboxImg.addEventListener('pointermove', function(e) {
+      if (!pointers.has(e.pointerId)) return;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (pointers.size === 2 && pinchStart) {
+        const [a, b] = [...pointers.values()];
+        const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+        const minS = zoom.fitScale;
+        const maxS = zoom.fitScale * MAX_ZOOM_MULT;
+        const newScale = Math.max(minS, Math.min(maxS, pinchStart.scale * (dist / pinchStart.distance)));
+        // Anchor: keep the pinch midpoint over the same image pixel.
+        const m = pinchStart.midpoint;
+        const k = newScale / pinchStart.scale;
+        zoom.scale = newScale;
+        zoom.tx = m.x - (m.x - pinchStart.tx) * k;
+        zoom.ty = m.y - (m.y - pinchStart.ty) * k;
+        clampPan();
+        applyTransform();
+      } else if (pointers.size === 1 && panStart && zoom.scale > zoom.fitScale * 1.001) {
+        zoom.tx = panStart.tx + (e.clientX - panStart.pointerX);
+        zoom.ty = panStart.ty + (e.clientY - panStart.pointerY);
+        clampPan();
+        applyTransform();
+      }
+    });
+
+    function releasePointer(e) {
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) pinchStart = null;
+      if (pointers.size < 1) panStart = null;
+      // Snap back to fit if the user pinched out past fit-level.
+      if (zoom.scale < zoom.fitScale * 1.02) {
+        zoom.scale = zoom.fitScale;
+        const nw = lightboxImg.naturalWidth || 0;
+        const nh = lightboxImg.naturalHeight || 0;
+        const { w, h } = viewportSize();
+        zoom.tx = (w - nw * zoom.scale) / 2;
+        zoom.ty = (h - nh * zoom.scale) / 2;
+        applyTransform();
+      }
+    }
+    lightboxImg.addEventListener('pointerup', releasePointer);
+    lightboxImg.addEventListener('pointercancel', releasePointer);
+
+    // Mouse wheel → zoom on desktop (shift+wheel for finer control).
+    lightboxImg.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      const step = e.shiftKey ? 0.05 : 0.15;
+      const target = zoom.scale * (e.deltaY < 0 ? (1 + step) : (1 - step));
+      zoomAtPoint(target, e.clientX, e.clientY);
+    }, { passive: false });
+
+    // Viewport resize → re-fit (but preserve user zoom ratio on top of fit).
+    window.addEventListener('resize', function() {
+      if (lightbox.classList.contains('hidden')) return;
+      const oldFit = zoom.fitScale || 1;
+      const userRatio = zoom.scale / oldFit;
+      computeFit();
+      const target = Math.max(zoom.fitScale, Math.min(zoom.fitScale * MAX_ZOOM_MULT, zoom.fitScale * userRatio));
+      const { w, h } = viewportSize();
+      zoomAtPoint(target, w / 2, h / 2);
+    });
+
+    /* ── Swipe left/right on the backdrop to nav — only at rest zoom ── */
+    let touchStartX = 0;
+    lightbox.addEventListener('touchstart', function(e) {
+      // Skip when image is zoomed (panning) or when gesture started on the image.
+      if (zoom.scale > zoom.fitScale * 1.001) { touchStartX = 0; return; }
+      if (e.target === lightboxImg) { touchStartX = 0; return; }
+      if (e.touches.length === 1) touchStartX = e.touches[0].clientX;
+    }, { passive: true });
+    lightbox.addEventListener('touchend', function(e) {
+      if (!touchStartX) return;
+      const dx = (e.changedTouches[0].clientX) - touchStartX;
+      touchStartX = 0;
+      if (Math.abs(dx) < 40) return;
+      if (dx > 0) lightboxPrevImg(); else lightboxNextImg();
+    }, { passive: true });
+
+    // ── Hash Change Listener ─────────────────────────────────────────
+    window.addEventListener('hashchange', function() {
+      const hash = location.hash.replace('#', '');
+      const ev = allEvents.find(e => e.slug === hash);
+      const ch = challenges.find(c => c.slug === hash);
+      if ((ev && ev.id !== activeEventId) || (ch && ch.id !== activeChallengeId)) routeFromHash();
+    });
+
+    // ── Init ─────────────────────────────────────────────────────────
+    loadEvents();
+  </script>
+</body>
+</html>
