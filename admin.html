@@ -248,6 +248,8 @@
     .status-line.ok { background: #1b4332; color: #95d5b2; border: 1px solid #2d6a4f; }
     .status-line.err { background: #5c1a1a; color: #f5c6cb; border: 1px solid #8b2e2e; }
 
+    #admin[inert] { opacity: 0.6; }
+
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
 
@@ -651,7 +653,7 @@
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-primary" id="brk-submit" onclick="saveBracket()">Save Bracket</button>
-            <button class="btn btn-outline" id="brk-cancel" onclick="cancelBracketEdit()" style="display:none">Cancel</button>
+            <button class="btn btn-outline" id="brk-cancel" onclick="if (okToDiscardFailedSave()) cancelBracketEdit()" style="display:none">Cancel</button>
           </div>
         </div>
 
@@ -666,7 +668,7 @@
     </div><!-- /admin -->
   </div><!-- /page -->
 
-  <div class="footer">Trophy Case Admin v0.11</div>
+  <div class="footer">Trophy Case Admin v0.12</div>
 
 <script>
 /* ============================================================
@@ -686,9 +688,11 @@
  *  Storage bucket: trophy-case-photos (public)
  * ============================================================ */
 
-const APP_VERSION = '0.11';
+const APP_VERSION = '0.12';
 const SB_URL   = 'https://dqzbekoaysgaiqljueac.supabase.co';
 const SB_SCHEMA = 'trophycase';
+const REST_TIMEOUT_MS = 30000;
+const UPLOAD_TIMEOUT_MS = 120000;
 const SB_READ  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxemJla29heXNnYWlxbGp1ZWFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNzA5NzgsImV4cCI6MjA5MDc0Njk3OH0.cCdGxZ4zEFzU_r6lWSDeoNWG67Q4MSYCAtpds035dfU';
 let SB_WRITE   = ''; // set from URL ?key= param
 
@@ -714,6 +718,20 @@ let bracketPhotosState = [];
 
 /* ---------- Utilities ---------- */
 
+/** fetch that gives up. A dead signal can otherwise hang for minutes, with the page frozen behind it. */
+async function fetchWithTimeout(url, opts, ms) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctl.signal });
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error('timed out after ' + Math.round(ms / 1000) + ' seconds');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** The role claim of a JWT, or '' if it isn't one */
 function jwtRole(j) {
   try { return JSON.parse(atob(j.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).role || ''; } catch (e) { return ''; }
@@ -733,6 +751,26 @@ function toSlug(s) {
 }
 
 /** Show status line */
+/* Freeze the whole admin while a save or a PDF render runs. Cancel, Edit, the event
+   dropdown and Delete all act on the form or the list a running save is using: tapping
+   Cancel mid-save once published an empty photo list and deleted the real files. */
+let _busy = 0;
+function setBusy(on) {
+  _busy = Math.max(0, _busy + (on ? 1 : -1));
+  document.getElementById('admin').inert = _busy > 0;
+}
+
+/* A save that failed is still in the form until it's retried. Leaving it needs a yes,
+   and leaving clears its "tap Save again", which would otherwise apply to something else. */
+let _failedSave = false;
+function okToDiscardFailedSave() {
+  if (!_failedSave) return true;
+  if (!confirm('Your last save failed and is still in this form. Discard it?')) return false;
+  _failedSave = false;
+  document.getElementById('status').className = 'status-line';
+  return true;
+}
+
 let _statusTimer = null;
 function showStatus(msg, type) {
   const el = document.getElementById('status');
@@ -761,7 +799,7 @@ async function sb(method, path, body, useWrite) {
   if (body && method !== 'GET' && method !== 'DELETE') opts.body = JSON.stringify(body);
   // For DELETE with Prefer header to get back deleted rows
   if (method === 'DELETE') opts.headers['Prefer'] = 'return=representation';
-  const r = await fetch(SB_URL + '/rest/v1/' + path, opts);
+  const r = await fetchWithTimeout(SB_URL + '/rest/v1/' + path, opts, REST_TIMEOUT_MS);
   if (!r.ok) {
     const txt = await r.text();
     throw new Error('Supabase ' + r.status + ': ' + txt);
@@ -781,7 +819,7 @@ async function uploadImage(file, folder, bracketId, type) {
             : mime === 'image/webp' ? 'webp'
             : 'jpg';
   const path = folder + '/' + bracketId + '_' + type + '_' + ts + '.' + ext;
-  const r = await fetch(SB_URL + '/storage/v1/object/trophy-case-photos/' + path, {
+  const r = await fetchWithTimeout(SB_URL + '/storage/v1/object/trophy-case-photos/' + path, {
     method: 'PUT',
     headers: {
       'Authorization': 'Bearer ' + SB_WRITE,
@@ -789,7 +827,7 @@ async function uploadImage(file, folder, bracketId, type) {
       'x-upsert': 'true'
     },
     body: file
-  });
+  }, UPLOAD_TIMEOUT_MS);
   if (!r.ok) {
     const txt = await r.text();
     throw new Error('Storage upload ' + r.status + ': ' + txt);
@@ -800,10 +838,10 @@ async function uploadImage(file, folder, bracketId, type) {
 /** Delete file from Supabase Storage */
 async function deleteStorageFile(path) {
   if (!path) return;
-  await fetch(SB_URL + '/storage/v1/object/trophy-case-photos/' + path, {
+  await fetchWithTimeout(SB_URL + '/storage/v1/object/trophy-case-photos/' + path, {
     method: 'DELETE',
     headers: { 'Authorization': 'Bearer ' + SB_WRITE }
-  });
+  }, REST_TIMEOUT_MS);
   // Ignore errors on delete — file may already be gone
 }
 
@@ -977,6 +1015,7 @@ async function onBracketPhotosAdded(input) {
   if (!files.length) return;
   // Reset the input immediately so re-picking the same file after a remove still fires change.
   input.value = '';
+  setBusy(true);   // a render finishing after the form moved on would add pages to the next winner
 
   const addLabel = document.getElementById('bracket-add-label');
   const origLabel = addLabel ? addLabel.textContent : '';
@@ -1013,6 +1052,7 @@ async function onBracketPhotosAdded(input) {
   } finally {
     if (addLabel) addLabel.textContent = origLabel;
     renderBracketPhotosList();
+    setBusy(false);
   }
 }
 
@@ -1063,6 +1103,7 @@ async function onFileSelected(input, labelId, previewId) {
   label.classList.add('has-file');
   delete input._pdfHighRes;
 
+  setBusy(true);   // Save during a render would publish without this photo
   try {
     if (isPdf(file)) {
       // Two render passes: a small one for instant preview, and the
@@ -1081,8 +1122,12 @@ async function onFileSelected(input, labelId, previewId) {
       preview.classList.remove('hidden');
     }
   } catch (e) {
-    showStatus('Could not read file: ' + e.message, 'err');
+    showStatus('Could not read file: ' + e.message + '. Pick it again.', 'err');
     label.textContent = file.name + ' (failed)';
+    input.value = '';   // so a failed file can't be saved as if it were fine, and can be re-picked
+    delete input._pdfHighRes;
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -1236,18 +1281,16 @@ async function deleteEvent(id, name) {
   const delLabel = (delEv ? challengeLabel(delEv) + ' – ' : '') + name;
   if (!confirm('Delete event "' + delLabel + '"? This also deletes all its winners and photos, for good.')) return;
   try {
-    // First delete all brackets for this event (and their storage files)
-    const brackets = await sb('GET', 'trophy_brackets?event_id=eq.' + id + '&select=id,trophy_photo_path,runner_up_photo_path,bracket_photo_paths');
-    for (const b of (brackets || [])) {
-      await deleteStorageFile(b.trophy_photo_path);
-      await deleteStorageFile(b.runner_up_photo_path);
-      const arr = Array.isArray(b.bracket_photo_paths) ? b.bracket_photo_paths : [];
-      for (const p of arr) await deleteStorageFile(p);
-    }
+    // Rows first: the public page reads them, so while a row exists its files must too.
+    const brackets = await sb('GET', 'trophy_brackets?event_id=eq.' + id + '&select=id,trophy_photo_path,runner_up_photo_path,bracket_photo_paths', null, true);
     if (brackets && brackets.length) {
       await sb('DELETE', 'trophy_brackets?event_id=eq.' + id, null, true);
     }
     await sb('DELETE', 'trophy_events?id=eq.' + id, null, true);
+    for (const b of (brackets || [])) {
+      const arr = Array.isArray(b.bracket_photo_paths) ? b.bracket_photo_paths : [];
+      for (const p of [b.trophy_photo_path, b.runner_up_photo_path, ...arr]) await deleteStorageFile(p).catch(() => {});
+    }
     showStatus('Event deleted.', 'ok');
     await loadEvents();
   } catch (e) {
@@ -1363,8 +1406,14 @@ function populateBracketAreaDropdown() {
 }
 
 /** Called when the user picks an event in the Brackets tab */
+let _brkEventShown = '';   // what the dropdown showed, to go back to if a discard is refused
 async function onBracketEventChange() {
   const eventId = document.getElementById('brk-event').value;
+  if (!okToDiscardFailedSave()) {
+    document.getElementById('brk-event').value = _brkEventShown;
+    return;
+  }
+  _brkEventShown = eventId;
   const formWrap = document.getElementById('bracket-form-wrap');
   const listWrap = document.getElementById('bracket-list-wrap');
   if (!eventId) {
@@ -1544,6 +1593,7 @@ function cancelBracketEdit() {
 function editBracket(id) {
   const b = bracketsCache.find(x => x.id === id);
   if (!b) return;
+  if (!okToDiscardFailedSave()) return;
   document.getElementById('brk-edit-id').value = b.id;
   // Title — SL label only makes sense when the event uses SLs
   var title = 'Edit Bracket';
@@ -1633,7 +1683,12 @@ async function saveBracket() {
   if (hasSL && !sl) {
     return showStatus('Skill level is required for this event.', 'err');
   }
+  if (hasSL && (sl < 1 || sl > 9 || (slMax && (slMax < sl || slMax > 9)))) {
+    return showStatus('Skill levels run from 1 to 9, and SL Max can\'t be below Skill Level.', 'err');
+  }
 
+  const photos = bracketPhotosState.slice();   // a copy: nothing may change this mid-save
+  setBusy(true);
   const btn = document.getElementById('brk-submit');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Saving...';
@@ -1660,6 +1715,7 @@ async function saveBracket() {
       const same = await sb('GET', 'trophy_brackets?event_id=eq.' + parseInt(eventId, 10)
         + '&winner_name=eq.' + encodeURIComponent(winnerName) + '&select=id');
       if (same && same.length && !confirm('"' + winnerName + '" is already saved on this event. Add them again?')) {
+        _failedSave = false;
         showStatus('Nothing added. "' + winnerName + '" was already saved.', 'ok');
         cancelBracketEdit();
         await loadBrackets(eventId);
@@ -1704,8 +1760,8 @@ async function saveBracket() {
     // Bracket photos — iterate the composer state in order, uploading new files
     // and keeping existing paths. Build the final array in the user-chosen order.
     const finalBracketPaths = [];
-    for (let i = 0; i < bracketPhotosState.length; i++) {
-      const entry = bracketPhotosState[i];
+    for (let i = 0; i < photos.length; i++) {
+      const entry = photos[i];
       if (entry.kind === 'existing') {
         finalBracketPaths.push(entry.path);
       } else {
@@ -1733,6 +1789,11 @@ async function saveBracket() {
       runner_up_photo_path: runnerUpPath,
       bracket_photo_paths: finalBracketPaths
     };
+    // Areas that failed to load leave an empty dropdown, and saving that would erase them.
+    if (editId && !areasCache.length) {
+      delete fields.area_id;
+      delete fields.runner_up_area_id;
+    }
     rowSent = true;
     if (editId) {
       const saved = await sb('PATCH', 'trophy_brackets?id=eq.' + parseInt(editId, 10), { ...fields, updated_at: new Date().toISOString() }, true);
@@ -1744,6 +1805,7 @@ async function saveBracket() {
     // The row is safe. Removing replaced files is housekeeping: a failure only leaves a spare file.
     for (const p of stale) await deleteStorageFile(p).catch(() => {});
 
+    _failedSave = false;
     showStatus(editId ? 'Bracket updated.' : 'Bracket added.', 'ok');
     cancelBracketEdit();
     await loadBrackets(eventId);
@@ -1751,8 +1813,10 @@ async function saveBracket() {
     // Before the row was sent, nothing points at this attempt's files. After it, the
     // row may have landed, so they stay: a spare file costs nothing, a broken photo does.
     if (!rowSent) for (const p of uploaded) await deleteStorageFile(p).catch(() => {});
+    _failedSave = true;
     showStatus("Couldn't save. Check your signal and tap Save again. (" + e.message + ')', 'err');
   } finally {
+    setBusy(false);
     btn.disabled = false;
     btn.textContent = document.getElementById('brk-edit-id').value ? 'Update Bracket' : 'Save Bracket';
   }
@@ -1761,19 +1825,22 @@ async function saveBracket() {
 async function deleteBracket(id) {
   const b = bracketsCache.find(x => x.id === id);
   if (!b) return;
-  if (!confirm('Delete bracket SL ' + b.skill_level + ' — ' + b.winner_name + '?')) return;
+  const ev = eventsCache.find(e => String(e.id) === document.getElementById('brk-event').value);
+  const where = ev ? ' from ' + challengeLabel(ev) + ' – ' + ev.name : '';
+  if (!confirm('Delete winner "' + b.winner_name + '"' + where + '? This also deletes their photos, for good.')) return;
+  setBusy(true);
   try {
-    // Delete all storage files for this bracket
-    await deleteStorageFile(b.trophy_photo_path);
-    await deleteStorageFile(b.runner_up_photo_path);
-    const arr = Array.isArray(b.bracket_photo_paths) ? b.bracket_photo_paths : [];
-    for (const p of arr) await deleteStorageFile(p);
-    // Delete row
+    // The row first: it's what the public page reads, so while it exists its files must too.
     await sb('DELETE', 'trophy_brackets?id=eq.' + id, null, true);
+    const arr = Array.isArray(b.bracket_photo_paths) ? b.bracket_photo_paths : [];
+    for (const p of [b.trophy_photo_path, b.runner_up_photo_path, ...arr]) await deleteStorageFile(p).catch(() => {});
+    if (document.getElementById('brk-edit-id').value === String(id)) cancelBracketEdit();
     showStatus('Bracket deleted.', 'ok');
     await loadBrackets();
   } catch (e) {
-    showStatus('Failed to delete bracket: ' + e.message, 'err');
+    showStatus('Failed to delete bracket: ' + e.message + '. Nothing was removed.', 'err');
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -1789,13 +1856,13 @@ async function deleteBracket(id) {
 
   // Validate the key by attempting a service_role query
   try {
-    const r = await fetch(SB_URL + '/rest/v1/trophy_events?select=id&limit=1', {
+    const r = await fetchWithTimeout(SB_URL + '/rest/v1/trophy_events?select=id&limit=1', {
       headers: {
         'apikey': key,
         'Authorization': 'Bearer ' + key,
         'Accept-Profile': SB_SCHEMA
       }
-    });
+    }, REST_TIMEOUT_MS);
     if (r.status === 401 || r.status === 403) {
       showStatus('Invalid admin key. Access denied.', 'err');
       return;
